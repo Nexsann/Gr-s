@@ -71,8 +71,8 @@ jobs:
                   applicationId "se.skotselytor.gps"
                   minSdk 26
                   targetSdk 35
-                  versionCode 4
-                  versionName "1.3"
+                  versionCode 10
+                  versionName "1.9"
               }
           }
           EOF
@@ -314,7 +314,7 @@ jobs:
               <button class="gps" id="gpsBtn">GPS</button>
             </div>
 
-            <div class="hint" id="pinHint">Tryck på kartan där nålen ska sitta</div>
+            <div class="hint" id="pinHint">Nålläget aktivt – tryck på kartan, eller använd Mitt</div>
             <div class="gpsWarn" id="gpsWarn">GPS osäker – sparas ej</div>
 
             <div class="legend">
@@ -433,8 +433,9 @@ jobs:
                 let pins = JSON.parse(localStorage.getItem(PINS_KEY) || "[]");
 
                 const statusLayer = new GraphicsLayer({ title:"Klippstatus" });
-                const pinsLayer = new GraphicsLayer({ title:"Egna nålar" });
-                const gpsLayer = new GraphicsLayer({ title:"GPS-spår" });
+                // GPS och nålar ritas i view.graphics istället för vanliga lager.
+                // Det gör att de alltid hamnar överst, även ovanpå ArcGIS MapServer-lager.
+                const trackLayer = new GraphicsLayer({ title:"GPS-spår" });
 
                 const webmap = new WebMap({
                   portalItem: {
@@ -448,6 +449,7 @@ jobs:
                   outFields:["*"],
                   opacity:0.18,
                   popupEnabled:false,
+                  popupTemplate:null,
                   renderer:{
                     type:"simple",
                     symbol:{
@@ -458,15 +460,19 @@ jobs:
                   }
                 });
 
-                // Viktig ordning: skötselytor underst, nålar ovanpå, GPS allra överst.
-                webmap.layers.addMany([skotselLayer, statusLayer, pinsLayer, gpsLayer]);
+                // Skötselytor och spår som lager. Nålar/GPS läggs i view.graphics för att alltid ligga överst.
+                webmap.layers.addMany([skotselLayer, statusLayer]);
 
                 const view = new MapView({
                   container:"viewDiv",
                   map:webmap,
                   padding:{ top:70 },
-                  constraints:{ snapToZoom:false }
+                  constraints:{ snapToZoom:false },
+                  popupEnabled:false
                 });
+
+                view.popupEnabled = false;
+                try { view.popup.autoOpenEnabled = false; } catch(_) {}
 
                 const locate = new Locate({
                   view,
@@ -476,17 +482,29 @@ jobs:
                   }
                 });
 
-                view.ui.add(locate, "bottom-left");
+                // Esri Locate-widget visas inte. Vi använder egen GPS-följning.
 
                 view.when(() => {
+                  try {
+                    webmap.allLayers.forEach(layer => {
+                      try { layer.popupEnabled = false; layer.popupTemplate = null; } catch(_) {}
+                      if (layer.layers) {
+                        layer.layers.forEach(sublayer => {
+                          try { sublayer.popupEnabled = false; sublayer.popupTemplate = null; } catch(_) {}
+                        });
+                      }
+                    });
+                  } catch(_) {}
                   redrawTrack();
                   redrawPins();
                   showToast("Kartan är redo");
                 });
 
-                document.getElementById("gpsBtn").onclick = () => locate.locate();
+                document.getElementById("gpsBtn").onclick = centerOnGpsOrStart;
                 document.getElementById("trackBtn").onclick = toggleTrack;
                 document.getElementById("pinBtn").onclick = togglePinMode;
+                document.getElementById("pinGpsBtn").onclick = createPinAtGps;
+                document.getElementById("pinCenterTopBtn").onclick = createPinAtCenter;
                 document.getElementById("pinGpsBtn").onclick = createPinAtGps;
                 document.getElementById("closeArea").onclick = () => document.getElementById("areaPanel").classList.remove("open");
                 document.getElementById("closePin").onclick = closePinPanel;
@@ -530,7 +548,25 @@ jobs:
                 document.getElementById("savePinBtn").onclick = savePin;
                 document.getElementById("deletePinBtn").onclick = deletePin;
 
+                view.on("pointer-down", e => {
+                  if (!addPinMode) return;
+                  try { e.stopPropagation(); } catch(_) {}
+                  try { view.popup.close(); } catch(_) {}
+                  const mapPoint = view.toMap({ x:e.x, y:e.y });
+                  if (!mapPoint) {
+                    showToast("Kunde inte läsa kartpunkt");
+                    return;
+                  }
+                  pendingPinGeometry = mapPoint.clone().toJSON();
+                  selectedPinId = null;
+                  openPinPanelForNew(pendingPinGeometry);
+                  setPinMode(false);
+                });
+
                 view.on("click", async e => {
+                  // Stäng ArcGIS egna popuprutor direkt. Vi använder egna paneler istället.
+                  try { view.popup.close(); } catch(_) {}
+
                   if (addPinMode) {
                     // I nålläge ska gräsytor ALDRIG fånga klicket.
                     pendingPinGeometry = e.mapPoint.clone().toJSON();
@@ -541,7 +577,7 @@ jobs:
                   }
 
                   const hit = await view.hitTest(e);
-                  const pinHit = hit.results.find(r => r.graphic && r.graphic.layer === pinsLayer);
+                  const pinHit = hit.results.find(r => r.graphic && r.graphic.attributes && r.graphic.attributes.__type === "pin");
                   if (pinHit) {
                     openPinPanelForExisting(pinHit.graphic.attributes.id);
                     return;
@@ -566,6 +602,34 @@ jobs:
 
                 function makeGpsGeometry(p) {
                   return { type:"point", longitude:p.lon, latitude:p.lat, spatialReference:{ wkid:4326 } };
+                }
+
+                function centerOnGpsOrStart() {
+                  followGps = true;
+                  if (!tracking) startTrack();
+                  if (lastGpsPoint) {
+                    view.goTo({ center:[lastGpsPoint.lon,lastGpsPoint.lat], scale:view.scale || 900 }, { animate:true }).catch(()=>{});
+                    showToast("Följer GPS");
+                  } else {
+                    showToast("Startar GPS… vänta på position");
+                  }
+                }
+
+                function createPinAtCenter() {
+                  selectedPinId = null;
+                  pendingPinGeometry = view.center.clone().toJSON();
+                  openPinPanelForNew(pendingPinGeometry);
+                  showToast("Nål i kartans mitt");
+                }
+
+                function createPinAtGps() {
+                  if (!lastGpsPoint) {
+                    showToast("Tryck Spåra/GPS först och vänta på position");
+                    return;
+                  }
+                  selectedPinId = null;
+                  pendingPinGeometry = { type:"point", longitude:lastGpsPoint.lon, latitude:lastGpsPoint.lat, spatialReference:{ wkid:4326 } };
+                  openPinPanelForNew(pendingPinGeometry);
                 }
 
                 function openAreaPanel(g) {
@@ -678,21 +742,31 @@ jobs:
                 }
 
                 function redrawPins() {
-                  pinsLayer.removeAll();
+                  const oldPins = view.graphics.items.filter(g => g.attributes && g.attributes.__type === "pin");
+                  oldPins.forEach(g => view.graphics.remove(g));
+
                   for (const p of pins) {
                     if (!p.geometry) continue;
-                    pinsLayer.add(new Graphic({
+                    view.graphics.add(new Graphic({
                       geometry:p.geometry,
-                      attributes:p,
+                      attributes:Object.assign({}, p, { __type:"pin" }),
                       symbol:{
                         type:"simple-marker",
                         style:p.status === "Fixad" ? "diamond" : "circle",
                         color: pinColor(p.type, p.status),
-                        size:19,
-                        outline:{ color:[255,255,255,1], width:2.5 }
+                        size:24,
+                        outline:{ color:[255,255,255,1], width:3 }
                       }
                     }));
                   }
+                }
+
+                function updatePinCoordsText(geom) {
+                  if (!geom) return;
+                  const x = geom.longitude ?? geom.x ?? "-";
+                  const y = geom.latitude ?? geom.y ?? "-";
+                  document.getElementById("pinLon").textContent = typeof x === "number" ? x.toFixed(4) : x;
+                  document.getElementById("pinLat").textContent = typeof y === "number" ? y.toFixed(4) : y;
                 }
 
                 function pinColor(type, status) {
@@ -711,19 +785,21 @@ jobs:
                     return;
                   }
                   tracking = true;
+                  followGps = true;
                   document.getElementById("trackBtn").classList.add("tracking");
                   document.getElementById("trackBtn").textContent = "Stoppa";
 
                   watchId = navigator.geolocation.watchPosition(onPos, err => {
                     showToast("GPS-fel: " + err.message);
                     stopTrack();
-                  }, { enableHighAccuracy:true, maximumAge:1000, timeout:15000 });
+                  }, { enableHighAccuracy:true, maximumAge:0, timeout:5000 });
 
                   showToast("Spårning startad");
                 }
 
                 function stopTrack() {
                   tracking = false;
+                  followGps = false;
                   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
                   watchId = null;
                   document.getElementById("trackBtn").classList.remove("tracking");
@@ -764,25 +840,42 @@ jobs:
                   }
 
                   hideGpsWarn();
+                  if (!Number.isFinite(p.heading) && track.length) {
+                    const prev = track[track.length - 1];
+                    const d = distance(prev.lat, prev.lon, p.lat, p.lon);
+                    if (d >= 2) p.heading = bearing(prev.lat, prev.lon, p.lat, p.lon);
+                  }
+
                   track.push(p);
                   localStorage.setItem(TRACK_KEY, JSON.stringify(track));
                   redrawTrack();
+                  drawGps(p);
                 }
 
                 function drawGps(p) {
-                  if (gpsGraphic) gpsLayer.remove(gpsGraphic);
-                  if (accGraphic) gpsLayer.remove(accGraphic);
+                  if (gpsGraphic) view.graphics.remove(gpsGraphic);
+                  if (accGraphic) view.graphics.remove(accGraphic);
 
                   const point = { type:"point", longitude:p.lon, latitude:p.lat, spatialReference:{ wkid:4326 } };
+                  const heading = getBestHeading(p);
+                  const hasHeading = Number.isFinite(heading);
 
                   gpsGraphic = new Graphic({
                     geometry:point,
-                    symbol:{
+                    attributes:{ __type:"gps" },
+                    symbol: hasHeading ? {
+                      type:"simple-marker",
+                      style:"triangle",
+                      color:[56,189,248,1],
+                      size:25,
+                      angle:heading,
+                      outline:{ color:[255,255,255,1], width:3 }
+                    } : {
                       type:"simple-marker",
                       style:"circle",
                       color:[56,189,248,1],
-                      size:18,
-                      outline:{ color:[255,255,255,1], width:3 }
+                      size:21,
+                      outline:{ color:[255,255,255,1], width:4 }
                     }
                   });
 
@@ -790,20 +883,21 @@ jobs:
                     const circle = geometryEngine.geodesicBuffer(gpsGraphic.geometry, Math.max(p.accuracy,5), "meters");
                     accGraphic = new Graphic({
                       geometry:circle,
+                      attributes:{ __type:"gpsAccuracy" },
                       symbol:{
                         type:"simple-fill",
                         color:[56,189,248,.10],
                         outline:{ color:[56,189,248,.35], width:1.2 }
                       }
                     });
-                    gpsLayer.add(accGraphic);
+                    view.graphics.add(accGraphic);
                   } catch(e) {}
 
-                  gpsLayer.add(gpsGraphic);
+                  view.graphics.add(gpsGraphic);
                 }
 
                 function redrawTrack() {
-                  if (lineGraphic) gpsLayer.remove(lineGraphic);
+                  if (lineGraphic) view.graphics.remove(lineGraphic);
                   if (track.length < 2) return;
 
                   lineGraphic = new Graphic({
@@ -811,10 +905,17 @@ jobs:
                       paths:[track.map(p => [p.lon,p.lat])],
                       spatialReference:{ wkid:4326 }
                     }),
-                    symbol:{ type:"simple-line", color:[14,165,233,.9], width:4 }
+                    attributes:{ __type:"track" },
+                    symbol:{
+                      type:"simple-line",
+                      color:[14,165,233,.95],
+                      width:5,
+                      cap:"round",
+                      join:"round"
+                    }
                   });
 
-                  gpsLayer.add(lineGraphic);
+                  view.graphics.add(lineGraphic);
                 }
 
                 function showGpsWarn(t) {
@@ -825,6 +926,33 @@ jobs:
 
                 function hideGpsWarn() {
                   document.getElementById("gpsWarn").classList.remove("show");
+                }
+
+                function getBestHeading(p) {
+                  if (Number.isFinite(p.heading)) {
+                    lastHeading = p.heading;
+                    return p.heading;
+                  }
+
+                  if (track.length >= 2) {
+                    const a = track[track.length - 2];
+                    const b = track[track.length - 1];
+                    const d = distance(a.lat, a.lon, b.lat, b.lon);
+                    if (d >= 2) {
+                      lastHeading = bearing(a.lat, a.lon, b.lat, b.lon);
+                      return lastHeading;
+                    }
+                  }
+
+                  return lastHeading;
+                }
+
+                function bearing(lat1, lon1, lat2, lon2) {
+                  const r = d => d * Math.PI / 180;
+                  const y = Math.sin(r(lon2-lon1)) * Math.cos(r(lat2));
+                  const x = Math.cos(r(lat1))*Math.sin(r(lat2)) -
+                            Math.sin(r(lat1))*Math.cos(r(lat2))*Math.cos(r(lon2-lon1));
+                  return (Math.atan2(y,x) * 180 / Math.PI + 360) % 360;
                 }
 
                 function distance(lat1,lon1,lat2,lon2) {
