@@ -71,8 +71,8 @@ jobs:
                   applicationId "se.skotselytor.gps"
                   minSdk 26
                   targetSdk 35
-                  versionCode 11
-                  versionName "2.0"
+                  versionCode 12
+                  versionName "2.1"
               }
           }
           EOF
@@ -864,16 +864,17 @@ jobs:
                     geometry:point,
                     attributes:{ __type:"gps" },
                     symbol: hasHeading ? {
-                      type:"picture-marker",
-                      url:"data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2764%27%20height%3D%2764%27%20viewBox%3D%270%200%2064%2064%27%3E%0A%3Cpath%20d%3D%27M32%204%20L46%2039%20L32%2032%20L18%2039%20Z%27%20fill%3D%27%230ea5e9%27%20stroke%3D%27white%27%20stroke-width%3D%276%27%20stroke-linejoin%3D%27round%27/%3E%0A%3Ccircle%20cx%3D%2732%27%20cy%3D%2738%27%20r%3D%277%27%20fill%3D%27%230ea5e9%27%20stroke%3D%27white%27%20stroke-width%3D%274%27/%3E%0A%3C/svg%3E",
-                      width:"26px",
-                      height:"26px",
-                      angle:heading
+                      type:"simple-marker",
+                      style:"triangle",
+                      color:[56,189,248,1],
+                      size:14,
+                      angle:heading,
+                      outline:{ color:[255,255,255,1], width:2 }
                     } : {
                       type:"simple-marker",
                       style:"circle",
                       color:[56,189,248,1],
-                      size:16,
+                      size:14,
                       outline:{ color:[255,255,255,1], width:3 }
                     }
                   });
@@ -885,8 +886,8 @@ jobs:
                       attributes:{ __type:"gpsAccuracy" },
                       symbol:{
                         type:"simple-fill",
-                        color:[56,189,248,.06],
-                        outline:{ color:[56,189,248,.22], width:1 }
+                        color:[56,189,248,.04],
+                        outline:{ color:[56,189,248,.16], width:1 }
                       }
                     });
                     view.graphics.add(accGraphic);
