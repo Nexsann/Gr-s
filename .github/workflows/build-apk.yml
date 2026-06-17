@@ -71,8 +71,8 @@ jobs:
                   applicationId "se.skotselytor.gps"
                   minSdk 26
                   targetSdk 35
-                  versionCode 12
-                  versionName "2.1"
+                  versionCode 13
+                  versionName "2.2"
               }
           }
           EOF
@@ -94,9 +94,14 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
               <application
                   android:theme="@style/AppTheme"
@@ -113,8 +118,217 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
+
+                  <service
+                      android:name=".BackgroundLocationService"
+                      android:enabled="true"
+                      android:exported="false"
+                      android:foregroundServiceType="location" />
+
               </application>
           </manifest>
+          EOF
+
+          cat > app/src/main/java/se/skotselytor/gps/BackgroundLocationService.java <<'EOF'
+          package se.skotselytor.gps;
+
+          import android.Manifest;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.location.Location;
+          import android.location.LocationListener;
+          import android.location.LocationManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.IBinder;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          public class BackgroundLocationService extends Service implements LocationListener {
+              public static final String ACTION_START = "se.skotselytor.gps.START_TRACKING";
+              public static final String ACTION_STOP = "se.skotselytor.gps.STOP_TRACKING";
+
+              private static final String CHANNEL_ID = "skotselytor_gps_tracking";
+              private static final int NOTIFICATION_ID = 2202;
+              private static final String PREFS = "skotselytor_native";
+              private static final String TRACK_KEY = "native_track";
+
+              private static final float MIN_DISTANCE_METERS = 3f;
+              private static final long MIN_TIME_MS = 3000L;
+              private static final float GOOD_ACCURACY = 30f;
+              private static final float BAD_ACCURACY = 80f;
+              private static final float IMPOSSIBLE_JUMP_METERS = 70f;
+
+              private LocationManager locationManager;
+              private Location lastSavedLocation;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  createNotificationChannel();
+                  locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+                      stopTracking();
+                      stopSelf();
+                      return START_NOT_STICKY;
+                  }
+
+                  startForeground(NOTIFICATION_ID, buildNotification("GPS-spårning aktiv"));
+                  startTracking();
+                  return START_STICKY;
+              }
+
+              private void startTracking() {
+                  if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                      checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                      stopSelf();
+                      return;
+                  }
+
+                  try {
+                      locationManager.requestLocationUpdates(
+                          LocationManager.GPS_PROVIDER,
+                          MIN_TIME_MS,
+                          MIN_DISTANCE_METERS,
+                          this
+                      );
+                  } catch (Exception ignored) {}
+
+                  try {
+                      locationManager.requestLocationUpdates(
+                          LocationManager.NETWORK_PROVIDER,
+                          MIN_TIME_MS,
+                          MIN_DISTANCE_METERS,
+                          this
+                      );
+                  } catch (Exception ignored) {}
+              }
+
+              private void stopTracking() {
+                  try {
+                      if (locationManager != null) {
+                          locationManager.removeUpdates(this);
+                      }
+                  } catch (Exception ignored) {}
+                  stopForeground(true);
+              }
+
+              @Override
+              public void onLocationChanged(Location location) {
+                  if (location == null) return;
+
+                  float acc = location.hasAccuracy() ? location.getAccuracy() : 999f;
+
+                  if (acc > BAD_ACCURACY) {
+                      return;
+                  }
+
+                  if (lastSavedLocation != null) {
+                      float d = lastSavedLocation.distanceTo(location);
+                      if (d > IMPOSSIBLE_JUMP_METERS && acc > 15f) {
+                          return;
+                      }
+                      if (d < MIN_DISTANCE_METERS) {
+                          return;
+                      }
+                  }
+
+                  if (acc > GOOD_ACCURACY) {
+                      return;
+                  }
+
+                  saveLocation(location);
+                  lastSavedLocation = location;
+              }
+
+              private void saveLocation(Location loc) {
+                  try {
+                      SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+                      String old = prefs.getString(TRACK_KEY, "[]");
+                      JSONArray arr = new JSONArray(old);
+
+                      JSONObject o = new JSONObject();
+                      o.put("lat", loc.getLatitude());
+                      o.put("lon", loc.getLongitude());
+                      o.put("accuracy", Math.round(loc.hasAccuracy() ? loc.getAccuracy() : 0));
+                      o.put("heading", loc.hasBearing() ? loc.getBearing() : JSONObject.NULL);
+                      o.put("time", System.currentTimeMillis());
+                      o.put("native", true);
+
+                      arr.put(o);
+
+                      int max = 10000;
+                      while (arr.length() > max) {
+                          arr.remove(0);
+                      }
+
+                      prefs.edit().putString(TRACK_KEY, arr.toString()).apply();
+                  } catch (Exception ignored) {}
+              }
+
+              private Notification buildNotification(String text) {
+                  Notification.Builder b;
+
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      b = new Notification.Builder(this, CHANNEL_ID);
+                  } else {
+                      b = new Notification.Builder(this);
+                  }
+
+                  return b
+                      .setContentTitle("Skötselytor GPS")
+                      .setContentText(text)
+                      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                      .setOngoing(true)
+                      .setShowWhen(false)
+                      .build();
+              }
+
+              private void createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      NotificationChannel channel = new NotificationChannel(
+                          CHANNEL_ID,
+                          "GPS-spårning",
+                          NotificationManager.IMPORTANCE_LOW
+                      );
+                      channel.setDescription("Visas när Skötselytor GPS spårar i bakgrunden.");
+
+                      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (nm != null) nm.createNotificationChannel(channel);
+                  }
+              }
+
+              @Override
+              public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+              @Override
+              public void onProviderEnabled(String provider) {}
+
+              @Override
+              public void onProviderDisabled(String provider) {}
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              @Override
+              public void onDestroy() {
+                  stopTracking();
+                  super.onDestroy();
+              }
+          }
           EOF
 
           cat > app/src/main/java/se/skotselytor/gps/MainActivity.java <<'EOF'
@@ -123,9 +337,13 @@ jobs:
           import android.Manifest;
           import android.annotation.SuppressLint;
           import android.app.Activity;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
+          import android.os.Build;
           import android.os.Bundle;
           import android.webkit.GeolocationPermissions;
+          import android.webkit.JavascriptInterface;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
@@ -133,21 +351,18 @@ jobs:
 
           public class MainActivity extends Activity {
               private static final int LOCATION_REQUEST = 1001;
+              private static final int NOTIFICATION_REQUEST = 1002;
+
               private WebView webView;
               private GeolocationPermissions.Callback geoCallback;
               private String geoOrigin;
 
-              @SuppressLint("SetJavaScriptEnabled")
+              @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
-                  if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                      requestPermissions(new String[] {
-                          Manifest.permission.ACCESS_FINE_LOCATION,
-                          Manifest.permission.ACCESS_COARSE_LOCATION
-                      }, LOCATION_REQUEST);
-                  }
+                  requestNeededPermissions();
 
                   webView = new WebView(this);
                   setContentView(webView);
@@ -161,7 +376,15 @@ jobs:
                   s.setAllowContentAccess(true);
                   s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
-                  webView.setWebViewClient(new WebViewClient());
+                  webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
+
+                  webView.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
+                          super.onPageFinished(view, url);
+                          injectNativeTrack();
+                      }
+                  });
 
                   webView.setWebChromeClient(new WebChromeClient() {
                       @Override
@@ -187,6 +410,47 @@ jobs:
                   webView.loadUrl("file:///android_asset/index.html");
               }
 
+              private void requestNeededPermissions() {
+                  if (Build.VERSION.SDK_INT >= 23) {
+                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[] {
+                              Manifest.permission.ACCESS_FINE_LOCATION,
+                              Manifest.permission.ACCESS_COARSE_LOCATION
+                          }, LOCATION_REQUEST);
+                      }
+                  }
+
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[] {
+                              Manifest.permission.POST_NOTIFICATIONS
+                          }, NOTIFICATION_REQUEST);
+                      }
+                  }
+              }
+
+              private void injectNativeTrack() {
+                  try {
+                      SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                      String nativeTrack = prefs.getString("native_track", "[]");
+                      String escaped = nativeTrack
+                          .replace("\\", "\\\\")
+                          .replace("'", "\\'")
+                          .replace("\n", "");
+
+                      String js =
+                          "try {" +
+                          "  window.mergeNativeTrack && window.mergeNativeTrack('" + escaped + "');" +
+                          "} catch(e) { console.log(e); }";
+
+                      if (Build.VERSION.SDK_INT >= 19) {
+                          webView.evaluateJavascript(js, null);
+                      } else {
+                          webView.loadUrl("javascript:" + js);
+                      }
+                  } catch (Exception ignored) {}
+              }
+
               @Override
               public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
                   super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -205,6 +469,33 @@ jobs:
                           geoCallback = null;
                           geoOrigin = null;
                       }
+                  }
+              }
+
+              public class AndroidBridge {
+                  @JavascriptInterface
+                  public void startBackgroundTracking() {
+                      Intent i = new Intent(MainActivity.this, BackgroundLocationService.class);
+                      i.setAction(BackgroundLocationService.ACTION_START);
+
+                      if (Build.VERSION.SDK_INT >= 26) {
+                          startForegroundService(i);
+                      } else {
+                          startService(i);
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public void stopBackgroundTracking() {
+                      Intent i = new Intent(MainActivity.this, BackgroundLocationService.class);
+                      i.setAction(BackgroundLocationService.ACTION_STOP);
+                      startService(i);
+                  }
+
+                  @JavascriptInterface
+                  public String getNativeTrack() {
+                      SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                      return prefs.getString("native_track", "[]");
                   }
               }
 
@@ -230,74 +521,273 @@ jobs:
             <script src="https://js.arcgis.com/4.31/"></script>
             <style>
               html, body, #viewDiv {
-                margin:0; padding:0; height:100%; width:100%; overflow:hidden;
+                margin:0;
+                padding:0;
+                height:100%;
+                width:100%;
+                overflow:hidden;
                 font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                 background:#0b1220;
               }
+
               .topbar {
-                position:fixed; top:0; left:0; right:0; z-index:20;
-                display:flex; gap:6px; align-items:center; padding:10px;
+                position:fixed;
+                top:0;
+                left:0;
+                right:0;
+                z-index:20;
+                display:flex;
+                gap:6px;
+                align-items:center;
+                padding:10px;
                 background:linear-gradient(90deg,#082e5c,#004851);
-                color:white; box-shadow:0 8px 20px rgba(0,0,0,.25);
+                color:white;
+                box-shadow:0 8px 20px rgba(0,0,0,.25);
               }
-              .title { flex:1; min-width:0; line-height:1.05; }
-              .title b { display:block; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-              .title span { display:block; font-size:11px; opacity:.85; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-              button { border:0; border-radius:999px; padding:10px 11px; font-weight:800; font-size:12px; cursor:pointer; }
-              .btn { background:rgba(255,255,255,.16); color:white; }
-              .gps { background:#22c55e; color:#052e16; }
-              .tracking { background:#f59e0b !important; color:#451a03 !important; }
-              .pinMode { background:#ef4444 !important; color:white !important; }
+
+              .title {
+                flex:1;
+                min-width:0;
+                line-height:1.05;
+              }
+
+              .title b {
+                display:block;
+                font-size:15px;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+              }
+
+              .title span {
+                display:block;
+                font-size:11px;
+                opacity:.85;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+              }
+
+              button {
+                border:0;
+                border-radius:999px;
+                padding:10px 11px;
+                font-weight:800;
+                font-size:12px;
+                cursor:pointer;
+              }
+
+              .btn {
+                background:rgba(255,255,255,.16);
+                color:white;
+              }
+
+              .gps {
+                background:#22c55e;
+                color:#052e16;
+              }
+
+              .tracking {
+                background:#f59e0b !important;
+                color:#451a03 !important;
+              }
+
+              .pinMode {
+                background:#ef4444 !important;
+                color:white !important;
+              }
+
               .legend {
-                position:fixed; top:76px; right:8px; z-index:18;
-                background:rgba(255,255,255,.94); color:#0f172a;
-                border-radius:16px; padding:9px 11px; box-shadow:0 10px 28px rgba(0,0,0,.18);
-                font-size:12px; line-height:1.65;
+                position:fixed;
+                top:76px;
+                right:8px;
+                z-index:18;
+                background:rgba(255,255,255,.94);
+                color:#0f172a;
+                border-radius:16px;
+                padding:9px 11px;
+                box-shadow:0 10px 28px rgba(0,0,0,.18);
+                font-size:12px;
+                line-height:1.65;
               }
+
               .panel {
-                position:fixed; left:8px; right:8px; bottom:8px; z-index:30;
-                background:white; border-radius:18px; box-shadow:0 14px 36px rgba(0,0,0,.28);
-                display:none; overflow:hidden; max-height:58vh;
+                position:fixed;
+                left:8px;
+                right:8px;
+                bottom:8px;
+                z-index:30;
+                background:white;
+                border-radius:18px;
+                box-shadow:0 14px 36px rgba(0,0,0,.28);
+                display:none;
+                overflow:hidden;
+                max-height:58vh;
               }
-              .panel.open { display:block; }
+
+              .panel.open {
+                display:block;
+              }
+
               .panelHead {
-                padding:13px; border-bottom:1px solid #e2e8f0;
-                display:flex; justify-content:space-between; gap:10px; align-items:flex-start;
+                padding:13px;
+                border-bottom:1px solid #e2e8f0;
+                display:flex;
+                justify-content:space-between;
+                gap:10px;
+                align-items:flex-start;
               }
-              .panelHead h2 { margin:0; font-size:17px; }
-              .panelHead small { display:block; color:#64748b; margin-top:3px; }
-              .panelBody { padding:13px; overflow:auto; max-height:calc(58vh - 62px); }
-              .meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
-              .meta div { background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:8px; min-width:0; }
-              .meta b { display:block; font-size:10px; color:#64748b; text-transform:uppercase; }
-              .meta span { display:block; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+              .panelHead h2 {
+                margin:0;
+                font-size:17px;
+              }
+
+              .panelHead small {
+                display:block;
+                color:#64748b;
+                margin-top:3px;
+              }
+
+              .panelBody {
+                padding:13px;
+                overflow:auto;
+                max-height:calc(58vh - 62px);
+              }
+
+              .meta {
+                display:grid;
+                grid-template-columns:1fr 1fr;
+                gap:8px;
+                margin-bottom:10px;
+              }
+
+              .meta div {
+                background:#f8fafc;
+                border:1px solid #e2e8f0;
+                border-radius:12px;
+                padding:8px;
+                min-width:0;
+              }
+
+              .meta b {
+                display:block;
+                font-size:10px;
+                color:#64748b;
+                text-transform:uppercase;
+              }
+
+              .meta span {
+                display:block;
+                font-size:13px;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+              }
+
               input, textarea, select {
-                width:100%; box-sizing:border-box; border:1px solid #cbd5e1;
-                border-radius:12px; padding:11px; margin-top:8px; font:inherit; background:white;
+                width:100%;
+                box-sizing:border-box;
+                border:1px solid #cbd5e1;
+                border-radius:12px;
+                padding:11px;
+                margin-top:8px;
+                font:inherit;
+                background:white;
               }
-              .statuses { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-              .statuses button.active { outline:3px solid #0f172a; }
-              .save { width:100%; margin-top:10px; background:#082e5c; color:white; border-radius:13px; }
-              .delete { width:100%; margin-top:8px; background:#fee2e2; color:#7f1d1d; border-radius:13px; }
-              .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
-              .mini { background:#e2e8f0; color:#0f172a; border-radius:13px; }
-              .hidden { display:none !important; }
+
+              .statuses {
+                display:grid;
+                grid-template-columns:1fr 1fr;
+                gap:8px;
+                margin-top:10px;
+              }
+
+              .statuses button.active {
+                outline:3px solid #0f172a;
+              }
+
+              .save {
+                width:100%;
+                margin-top:10px;
+                background:#082e5c;
+                color:white;
+                border-radius:13px;
+              }
+
+              .delete {
+                width:100%;
+                margin-top:8px;
+                background:#fee2e2;
+                color:#7f1d1d;
+                border-radius:13px;
+              }
+
+              .row {
+                display:grid;
+                grid-template-columns:1fr 1fr;
+                gap:8px;
+                margin-top:8px;
+              }
+
+              .mini {
+                background:#e2e8f0;
+                color:#0f172a;
+                border-radius:13px;
+              }
+
+              .hidden {
+                display:none !important;
+              }
+
               .toast {
-                position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
-                z-index:80; background:#020617; color:white; border-radius:999px;
-                padding:11px 16px; font-weight:800; opacity:0; transition:.2s; white-space:nowrap;
+                position:fixed;
+                left:50%;
+                bottom:24px;
+                transform:translateX(-50%);
+                z-index:80;
+                background:#020617;
+                color:white;
+                border-radius:999px;
+                padding:11px 16px;
+                font-weight:800;
+                opacity:0;
+                transition:.2s;
+                white-space:nowrap;
               }
-              .toast.show { opacity:1; }
+
+              .toast.show {
+                opacity:1;
+              }
+
               .hint, .gpsWarn {
-                position:fixed; left:50%; transform:translateX(-50%);
-                z-index:70; color:white; border-radius:999px;
-                padding:10px 14px; font-size:13px; font-weight:900;
+                position:fixed;
+                left:50%;
+                transform:translateX(-50%);
+                z-index:70;
+                color:white;
+                border-radius:999px;
+                padding:10px 14px;
+                font-size:13px;
+                font-weight:900;
                 box-shadow:0 10px 25px rgba(0,0,0,.25);
                 display:none;
               }
-              .hint { top:86px; background:#ef4444; }
-              .gpsWarn { bottom:80px; background:#f59e0b; color:#451a03; }
-              .hint.show, .gpsWarn.show { display:block; }
+
+              .hint {
+                top:86px;
+                background:#ef4444;
+              }
+
+              .gpsWarn {
+                bottom:80px;
+                background:#f59e0b;
+                color:#451a03;
+              }
+
+              .hint.show, .gpsWarn.show {
+                display:block;
+              }
             </style>
           </head>
           <body>
@@ -306,15 +796,16 @@ jobs:
             <div class="topbar">
               <div class="title">
                 <b>Skötselytor GPS</b>
-                <span>GPS, spårning, status och nålar</span>
+                <span>GPS, bakgrundsspårning, status och nålar</span>
               </div>
               <button class="btn" id="pinBtn">Nål</button>
+              <button class="btn" id="pinCenterTopBtn">Mitt</button>
               <button class="btn" id="pinGpsBtn">Nål här</button>
               <button class="btn" id="trackBtn">Spåra</button>
               <button class="gps" id="gpsBtn">GPS</button>
             </div>
 
-            <div class="hint" id="pinHint">Nålläget aktivt – tryck på kartan, eller använd Mitt</div>
+            <div class="hint" id="pinHint">Nålläget aktivt – tryck på kartan, använd Mitt eller Nål här</div>
             <div class="gpsWarn" id="gpsWarn">GPS osäker – sparas ej</div>
 
             <div class="legend">
@@ -325,6 +816,8 @@ jobs:
               <div>🟠 Pågår</div>
               <div>🟢 Klippt</div>
               <div>🔴 Problem</div>
+              <hr>
+              <div id="trackInfo">Spår: 0 punkter</div>
             </div>
 
             <div class="panel" id="areaPanel">
@@ -367,6 +860,7 @@ jobs:
                   <div><b>X/Lon</b><span id="pinX">-</span></div>
                   <div><b>Y/Lat</b><span id="pinY">-</span></div>
                 </div>
+
                 <select id="pinType">
                   <option value="Handjagare krävs">Handjagare krävs</option>
                   <option value="Hinder">Hinder</option>
@@ -374,15 +868,19 @@ jobs:
                   <option value="Behöver kollas">Behöver kollas</option>
                   <option value="Annat">Annat</option>
                 </select>
+
                 <textarea id="pinComment" rows="4" placeholder="Kommentar, t.ex. Handjagare krävs runt stolpar"></textarea>
+
                 <select id="pinStatus">
                   <option value="Öppen">Öppen</option>
                   <option value="Fixad">Fixad</option>
                 </select>
+
                 <div class="row">
                   <button class="mini" id="movePinCenterBtn">Flytta till mitten</button>
                   <button class="mini" id="movePinGpsBtn">Flytta till GPS</button>
                 </div>
+
                 <button class="save" id="savePinBtn">Spara nål</button>
                 <button class="delete hidden" id="deletePinBtn">Ta bort nål</button>
               </div>
@@ -402,14 +900,15 @@ jobs:
                 "esri/geometry/Polyline",
                 "esri/geometry/geometryEngine"
               ], function(esriConfig, WebMap, MapView, FeatureLayer, GraphicsLayer, Locate, Graphic, Polyline, geometryEngine) {
+
                 esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
 
                 const WEBMAP_ID = "4811ba982b9e4a97b01cf4353224374b";
                 const LAYER_URL = "https://kartor.linkoping.se/arcgis/rest/services/sts_omradeskarta/sts_skotselkartan_l/MapServer/32";
 
                 const STORE_KEY = "skotselytor_status_v1";
-                const TRACK_KEY = "skotselytor_track_v2";
-                const PINS_KEY = "skotselytor_pins_v2";
+                const TRACK_KEY = "skotselytor_track_v3";
+                const PINS_KEY = "skotselytor_pins_v3";
 
                 const GOOD_ACCURACY = 30;
                 const BAD_ACCURACY = 80;
@@ -427,15 +926,15 @@ jobs:
                 let accGraphic = null;
                 let lineGraphic = null;
                 let lastGpsPoint = null;
+                let followGps = false;
+                let lastHeading = null;
+                let viewReady = false;
 
                 const statuses = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
                 let track = JSON.parse(localStorage.getItem(TRACK_KEY) || "[]");
                 let pins = JSON.parse(localStorage.getItem(PINS_KEY) || "[]");
 
                 const statusLayer = new GraphicsLayer({ title:"Klippstatus" });
-                // GPS och nålar ritas i view.graphics istället för vanliga lager.
-                // Det gör att de alltid hamnar överst, även ovanpå ArcGIS MapServer-lager.
-                const trackLayer = new GraphicsLayer({ title:"GPS-spår" });
 
                 const webmap = new WebMap({
                   portalItem: {
@@ -460,7 +959,6 @@ jobs:
                   }
                 });
 
-                // Skötselytor och spår som lager. Nålar/GPS läggs i view.graphics för att alltid ligga överst.
                 webmap.layers.addMany([skotselLayer, statusLayer]);
 
                 const view = new MapView({
@@ -482,39 +980,53 @@ jobs:
                   }
                 });
 
-                // Esri Locate-widget visas inte. Vi använder egen GPS-följning.
-
                 view.when(() => {
+                  viewReady = true;
+
                   try {
                     webmap.allLayers.forEach(layer => {
-                      try { layer.popupEnabled = false; layer.popupTemplate = null; } catch(_) {}
+                      try {
+                        layer.popupEnabled = false;
+                        layer.popupTemplate = null;
+                      } catch(_) {}
+
                       if (layer.layers) {
                         layer.layers.forEach(sublayer => {
-                          try { sublayer.popupEnabled = false; sublayer.popupTemplate = null; } catch(_) {}
+                          try {
+                            sublayer.popupEnabled = false;
+                            sublayer.popupTemplate = null;
+                          } catch(_) {}
                         });
                       }
                     });
                   } catch(_) {}
+
                   redrawTrack();
                   redrawPins();
+                  updateTrackInfo();
                   showToast("Kartan är redo");
                 });
 
                 document.getElementById("gpsBtn").onclick = centerOnGpsOrStart;
                 document.getElementById("trackBtn").onclick = toggleTrack;
                 document.getElementById("pinBtn").onclick = togglePinMode;
-                document.getElementById("pinGpsBtn").onclick = createPinAtGps;
                 document.getElementById("pinCenterTopBtn").onclick = createPinAtCenter;
                 document.getElementById("pinGpsBtn").onclick = createPinAtGps;
                 document.getElementById("closeArea").onclick = () => document.getElementById("areaPanel").classList.remove("open");
                 document.getElementById("closePin").onclick = closePinPanel;
+
                 document.getElementById("movePinCenterBtn").onclick = () => {
                   pendingPinGeometry = view.center.clone().toJSON();
                   updatePinCoordsText(pendingPinGeometry);
                   showToast("Nål flyttad till kartans mitt");
                 };
+
                 document.getElementById("movePinGpsBtn").onclick = () => {
-                  if (!lastGpsPoint) { showToast("Ingen GPS-position ännu"); return; }
+                  if (!lastGpsPoint) {
+                    showToast("Ingen GPS-position ännu");
+                    return;
+                  }
+
                   pendingPinGeometry = makeGpsGeometry(lastGpsPoint);
                   updatePinCoordsText(pendingPinGeometry);
                   showToast("Nål flyttad till GPS");
@@ -529,8 +1041,10 @@ jobs:
 
                 document.getElementById("saveAreaBtn").onclick = () => {
                   if (!selectedArea) return;
+
                   const a = selectedArea.attributes || {};
                   const id = a.OBJECTID;
+
                   statuses[id] = {
                     id,
                     status:areaStatus,
@@ -541,6 +1055,7 @@ jobs:
                     team:a.TEAM || a.Team || "",
                     distrikt:a.DISTRIKT || ""
                   };
+
                   localStorage.setItem(STORE_KEY, JSON.stringify(statuses));
                   showToast("Status sparad");
                 };
@@ -550,13 +1065,17 @@ jobs:
 
                 view.on("pointer-down", e => {
                   if (!addPinMode) return;
+
                   try { e.stopPropagation(); } catch(_) {}
                   try { view.popup.close(); } catch(_) {}
+
                   const mapPoint = view.toMap({ x:e.x, y:e.y });
+
                   if (!mapPoint) {
                     showToast("Kunde inte läsa kartpunkt");
                     return;
                   }
+
                   pendingPinGeometry = mapPoint.clone().toJSON();
                   selectedPinId = null;
                   openPinPanelForNew(pendingPinGeometry);
@@ -564,11 +1083,9 @@ jobs:
                 });
 
                 view.on("click", async e => {
-                  // Stäng ArcGIS egna popuprutor direkt. Vi använder egna paneler istället.
                   try { view.popup.close(); } catch(_) {}
 
                   if (addPinMode) {
-                    // I nålläge ska gräsytor ALDRIG fånga klicket.
                     pendingPinGeometry = e.mapPoint.clone().toJSON();
                     selectedPinId = null;
                     openPinPanelForNew(pendingPinGeometry);
@@ -577,48 +1094,78 @@ jobs:
                   }
 
                   const hit = await view.hitTest(e);
-                  const pinHit = hit.results.find(r => r.graphic && r.graphic.attributes && r.graphic.attributes.__type === "pin");
+
+                  const pinHit = hit.results.find(r =>
+                    r.graphic &&
+                    r.graphic.attributes &&
+                    r.graphic.attributes.__type === "pin"
+                  );
+
                   if (pinHit) {
                     openPinPanelForExisting(pinHit.graphic.attributes.id);
                     return;
                   }
 
-                  const areaHit = hit.results.find(r => r.graphic && r.graphic.layer === skotselLayer);
+                  const areaHit = hit.results.find(r =>
+                    r.graphic &&
+                    r.graphic.layer === skotselLayer
+                  );
+
                   if (areaHit) {
                     selectedArea = areaHit.graphic;
                     openAreaPanel(selectedArea);
                   }
                 });
 
-                function createPinAtGps() {
-                  if (!lastGpsPoint) {
-                    showToast("Tryck Spåra eller GPS först");
-                    return;
-                  }
-                  selectedPinId = null;
-                  pendingPinGeometry = makeGpsGeometry(lastGpsPoint);
-                  openPinPanelForNew(pendingPinGeometry);
-                }
+                window.mergeNativeTrack = function(nativeTrackText) {
+                  try {
+                    const nativeTrack = JSON.parse(nativeTrackText || "[]");
 
-                function makeGpsGeometry(p) {
-                  return { type:"point", longitude:p.lon, latitude:p.lat, spatialReference:{ wkid:4326 } };
-                }
+                    if (!Array.isArray(nativeTrack) || nativeTrack.length === 0) {
+                      return;
+                    }
 
-                function centerOnGpsOrStart() {
-                  followGps = true;
-                  if (!tracking) startTrack();
-                  if (lastGpsPoint) {
-                    view.goTo({ center:[lastGpsPoint.lon,lastGpsPoint.lat], scale:view.scale || 900 }, { animate:true }).catch(()=>{});
-                    showToast("Följer GPS");
-                  } else {
-                    showToast("Startar GPS… vänta på position");
+                    const existing = new Set(track.map(p => String(p.time) + "_" + p.lat + "_" + p.lon));
+
+                    nativeTrack.forEach(p => {
+                      const normalized = {
+                        lat:Number(p.lat),
+                        lon:Number(p.lon),
+                        accuracy:Number(p.accuracy || 0),
+                        heading:p.heading === null || p.heading === undefined ? null : Number(p.heading),
+                        time:typeof p.time === "number" ? new Date(p.time).toISOString() : p.time,
+                        native:true
+                      };
+
+                      const key = String(normalized.time) + "_" + normalized.lat + "_" + normalized.lon;
+
+                      if (
+                        Number.isFinite(normalized.lat) &&
+                        Number.isFinite(normalized.lon) &&
+                        !existing.has(key)
+                      ) {
+                        track.push(normalized);
+                        existing.add(key);
+                      }
+                    });
+
+                    track.sort((a,b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+                    localStorage.setItem(TRACK_KEY, JSON.stringify(track));
+
+                    if (viewReady) {
+                      redrawTrack();
+                      updateTrackInfo();
+                    }
+                  } catch(e) {
+                    console.log("mergeNativeTrack error", e);
                   }
-                }
+                };
 
                 function createPinAtCenter() {
                   selectedPinId = null;
                   pendingPinGeometry = view.center.clone().toJSON();
                   openPinPanelForNew(pendingPinGeometry);
+                  setPinMode(false);
                   showToast("Nål i kartans mitt");
                 }
 
@@ -627,16 +1174,47 @@ jobs:
                     showToast("Tryck Spåra/GPS först och vänta på position");
                     return;
                   }
+
                   selectedPinId = null;
-                  pendingPinGeometry = { type:"point", longitude:lastGpsPoint.lon, latitude:lastGpsPoint.lat, spatialReference:{ wkid:4326 } };
+                  pendingPinGeometry = makeGpsGeometry(lastGpsPoint);
                   openPinPanelForNew(pendingPinGeometry);
+                  setPinMode(false);
+                }
+
+                function makeGpsGeometry(p) {
+                  return {
+                    type:"point",
+                    longitude:p.lon,
+                    latitude:p.lat,
+                    spatialReference:{ wkid:4326 }
+                  };
+                }
+
+                function centerOnGpsOrStart() {
+                  followGps = true;
+
+                  if (!tracking) {
+                    startTrack();
+                  }
+
+                  if (lastGpsPoint) {
+                    view.goTo({
+                      center:[lastGpsPoint.lon,lastGpsPoint.lat],
+                      scale:view.scale || 900
+                    }, { animate:true }).catch(()=>{});
+                    showToast("Följer GPS");
+                  } else {
+                    showToast("Startar GPS… vänta på position");
+                  }
                 }
 
                 function openAreaPanel(g) {
                   document.getElementById("pinPanel").classList.remove("open");
+
                   const a = g.attributes || {};
                   const id = a.OBJECTID;
                   const saved = statuses[id];
+
                   areaStatus = saved ? saved.status : "Ej klippt";
 
                   document.getElementById("areaTitle").textContent = label(a.SUBTYP);
@@ -645,6 +1223,7 @@ jobs:
                   document.getElementById("mTeam").textContent = a.TEAM || a.Team || "-";
                   document.getElementById("mDistrict").textContent = a.DISTRIKT || "-";
                   document.getElementById("comment").value = saved ? saved.comment : "";
+
                   markAreaStatus();
                   document.getElementById("areaPanel").classList.add("open");
                 }
@@ -655,7 +1234,9 @@ jobs:
                   });
                 }
 
-                function togglePinMode() { setPinMode(!addPinMode); }
+                function togglePinMode() {
+                  setPinMode(!addPinMode);
+                }
 
                 function setPinMode(v) {
                   addPinMode = v;
@@ -669,6 +1250,7 @@ jobs:
                   document.getElementById("pinTitle").textContent = "Ny nål";
                   document.getElementById("pinSub").textContent = "Spara kommentar på vald plats";
                   updatePinCoordsText(geom);
+
                   document.getElementById("pinType").value = "Handjagare krävs";
                   document.getElementById("pinComment").value = "";
                   document.getElementById("pinStatus").value = "Öppen";
@@ -679,6 +1261,7 @@ jobs:
                 function openPinPanelForExisting(id) {
                   const p = pins.find(x => x.id === id);
                   if (!p) return;
+
                   selectedPinId = id;
                   pendingPinGeometry = p.geometry;
 
@@ -686,6 +1269,7 @@ jobs:
                   document.getElementById("pinTitle").textContent = p.type || "Egen nål";
                   document.getElementById("pinSub").textContent = p.createdAt ? "Skapad: " + new Date(p.createdAt).toLocaleString("sv-SE") : "Sparad nål";
                   updatePinCoordsText(p.geometry);
+
                   document.getElementById("pinType").value = p.type || "Annat";
                   document.getElementById("pinComment").value = p.comment || "";
                   document.getElementById("pinStatus").value = p.status || "Öppen";
@@ -695,14 +1279,19 @@ jobs:
 
                 function updatePinCoordsText(geom) {
                   if (!geom) return;
+
                   const x = geom.longitude ?? geom.x ?? "-";
                   const y = geom.latitude ?? geom.y ?? "-";
-                  document.getElementById("pinX").textContent = typeof x === "number" ? x.toFixed(4) : x;
-                  document.getElementById("pinY").textContent = typeof y === "number" ? y.toFixed(4) : y;
+
+                  document.getElementById("pinX").textContent = typeof x === "number" ? x.toFixed(5) : x;
+                  document.getElementById("pinY").textContent = typeof y === "number" ? y.toFixed(5) : y;
                 }
 
                 function savePin() {
-                  if (!pendingPinGeometry) return;
+                  if (!pendingPinGeometry) {
+                    showToast("Ingen nålposition vald");
+                    return;
+                  }
 
                   const data = {
                     id:selectedPinId || ("pin_" + Date.now()),
@@ -715,10 +1304,15 @@ jobs:
                   };
 
                   const ix = pins.findIndex(x => x.id === data.id);
-                  if (ix >= 0) pins[ix] = data;
-                  else pins.push(data);
+
+                  if (ix >= 0) {
+                    pins[ix] = data;
+                  } else {
+                    pins.push(data);
+                  }
 
                   localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+
                   selectedPinId = data.id;
                   redrawPins();
                   showToast("Nål sparad");
@@ -728,6 +1322,7 @@ jobs:
                 function deletePin() {
                   if (!selectedPinId) return;
                   if (!confirm("Ta bort denna nål?")) return;
+
                   pins = pins.filter(x => x.id !== selectedPinId);
                   localStorage.setItem(PINS_KEY, JSON.stringify(pins));
                   redrawPins();
@@ -742,11 +1337,16 @@ jobs:
                 }
 
                 function redrawPins() {
-                  const oldPins = view.graphics.items.filter(g => g.attributes && g.attributes.__type === "pin");
+                  const oldPins = view.graphics.items.filter(g =>
+                    g.attributes &&
+                    g.attributes.__type === "pin"
+                  );
+
                   oldPins.forEach(g => view.graphics.remove(g));
 
                   for (const p of pins) {
                     if (!p.geometry) continue;
+
                     view.graphics.add(new Graphic({
                       geometry:p.geometry,
                       attributes:Object.assign({}, p, { __type:"pin" }),
@@ -761,14 +1361,6 @@ jobs:
                   }
                 }
 
-                function updatePinCoordsText(geom) {
-                  if (!geom) return;
-                  const x = geom.longitude ?? geom.x ?? "-";
-                  const y = geom.latitude ?? geom.y ?? "-";
-                  document.getElementById("pinLon").textContent = typeof x === "number" ? x.toFixed(4) : x;
-                  document.getElementById("pinLat").textContent = typeof y === "number" ? y.toFixed(4) : y;
-                }
-
                 function pinColor(type, status) {
                   if (status === "Fixad") return [34,197,94,0.95];
                   if (type === "Handjagare krävs") return [245,158,11,0.95];
@@ -777,22 +1369,39 @@ jobs:
                   return [14,165,233,0.95];
                 }
 
-                function toggleTrack() { tracking ? stopTrack() : startTrack(); }
+                function toggleTrack() {
+                  tracking ? stopTrack() : startTrack();
+                }
 
                 function startTrack() {
                   if (!navigator.geolocation) {
                     showToast("GPS stöds inte");
                     return;
                   }
+
                   tracking = true;
                   followGps = true;
+
                   document.getElementById("trackBtn").classList.add("tracking");
                   document.getElementById("trackBtn").textContent = "Stoppa";
 
-                  watchId = navigator.geolocation.watchPosition(onPos, err => {
-                    showToast("GPS-fel: " + err.message);
-                    stopTrack();
-                  }, { enableHighAccuracy:true, maximumAge:0, timeout:5000 });
+                  try {
+                    if (window.AndroidBridge && window.AndroidBridge.startBackgroundTracking) {
+                      window.AndroidBridge.startBackgroundTracking();
+                    }
+                  } catch(e) {
+                    console.log(e);
+                  }
+
+                  if (watchId === null) {
+                    watchId = navigator.geolocation.watchPosition(onPos, err => {
+                      showToast("GPS-fel: " + err.message);
+                    }, {
+                      enableHighAccuracy:true,
+                      maximumAge:0,
+                      timeout:8000
+                    });
+                  }
 
                   showToast("Spårning startad");
                 }
@@ -800,8 +1409,21 @@ jobs:
                 function stopTrack() {
                   tracking = false;
                   followGps = false;
-                  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+                  if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
+                  }
+
                   watchId = null;
+
+                  try {
+                    if (window.AndroidBridge && window.AndroidBridge.stopBackgroundTracking) {
+                      window.AndroidBridge.stopBackgroundTracking();
+                    }
+                  } catch(e) {
+                    console.log(e);
+                  }
+
                   document.getElementById("trackBtn").classList.remove("tracking");
                   document.getElementById("trackBtn").textContent = "Spåra";
                   showToast("Spårning stoppad");
@@ -809,11 +1431,12 @@ jobs:
 
                 function onPos(pos) {
                   const c = pos.coords;
+
                   const p = {
                     lat:c.latitude,
                     lon:c.longitude,
                     accuracy:Math.round(c.accuracy || 0),
-                    heading: Number.isFinite(c.heading) ? c.heading : null,
+                    heading:Number.isFinite(c.heading) ? c.heading : null,
                     time:new Date(pos.timestamp || Date.now()).toISOString()
                   };
 
@@ -830,33 +1453,57 @@ jobs:
                   }
 
                   const last = track[track.length - 1];
+
                   if (last) {
                     const d = distance(last.lat,last.lon,p.lat,p.lon);
+
                     if (d > IMPOSSIBLE_JUMP_METERS && p.accuracy > 15) {
                       showGpsWarn("GPS-hopp ignorerat");
                       return;
                     }
-                    if (d < MIN_TRACK_DISTANCE_METERS) return;
+
+                    if (d < MIN_TRACK_DISTANCE_METERS) {
+                      return;
+                    }
                   }
 
                   hideGpsWarn();
+
                   if (!Number.isFinite(p.heading) && track.length) {
                     const prev = track[track.length - 1];
                     const d = distance(prev.lat, prev.lon, p.lat, p.lon);
-                    if (d >= 2) p.heading = bearing(prev.lat, prev.lon, p.lat, p.lon);
+
+                    if (d >= 2) {
+                      p.heading = bearing(prev.lat, prev.lon, p.lat, p.lon);
+                    }
                   }
 
                   track.push(p);
                   localStorage.setItem(TRACK_KEY, JSON.stringify(track));
+
                   redrawTrack();
                   drawGps(p);
+                  updateTrackInfo();
+
+                  if (followGps) {
+                    view.goTo({
+                      center:[p.lon,p.lat],
+                      scale:view.scale || 900
+                    }, { animate:false }).catch(()=>{});
+                  }
                 }
 
                 function drawGps(p) {
                   if (gpsGraphic) view.graphics.remove(gpsGraphic);
                   if (accGraphic) view.graphics.remove(accGraphic);
 
-                  const point = { type:"point", longitude:p.lon, latitude:p.lat, spatialReference:{ wkid:4326 } };
+                  const point = {
+                    type:"point",
+                    longitude:p.lon,
+                    latitude:p.lat,
+                    spatialReference:{ wkid:4326 }
+                  };
+
                   const heading = getBestHeading(p);
                   const hasHeading = Number.isFinite(heading);
 
@@ -881,6 +1528,7 @@ jobs:
 
                   try {
                     const circle = geometryEngine.geodesicBuffer(gpsGraphic.geometry, Math.max(p.accuracy,5), "meters");
+
                     accGraphic = new Graphic({
                       geometry:circle,
                       attributes:{ __type:"gpsAccuracy" },
@@ -890,6 +1538,7 @@ jobs:
                         outline:{ color:[56,189,248,.16], width:1 }
                       }
                     });
+
                     view.graphics.add(accGraphic);
                   } catch(e) {}
 
@@ -898,7 +1547,10 @@ jobs:
 
                 function redrawTrack() {
                   if (lineGraphic) view.graphics.remove(lineGraphic);
-                  if (track.length < 2) return;
+                  if (track.length < 2) {
+                    updateTrackInfo();
+                    return;
+                  }
 
                   lineGraphic = new Graphic({
                     geometry:new Polyline({
@@ -916,6 +1568,11 @@ jobs:
                   });
 
                   view.graphics.add(lineGraphic);
+                  updateTrackInfo();
+                }
+
+                function updateTrackInfo() {
+                  document.getElementById("trackInfo").textContent = "Spår: " + track.length + " punkter";
                 }
 
                 function showGpsWarn(t) {
@@ -938,6 +1595,7 @@ jobs:
                     const a = track[track.length - 2];
                     const b = track[track.length - 1];
                     const d = distance(a.lat, a.lon, b.lat, b.lon);
+
                     if (d >= 2) {
                       lastHeading = bearing(a.lat, a.lon, b.lat, b.lon);
                       return lastHeading;
@@ -960,7 +1618,12 @@ jobs:
                   const r = d => d * Math.PI / 180;
                   const dLat = r(lat2-lat1);
                   const dLon = r(lon2-lon1);
-                  const a = Math.sin(dLat/2)**2 + Math.cos(r(lat1))*Math.cos(r(lat2))*Math.sin(dLon/2)**2;
+                  const a =
+                    Math.sin(dLat/2)**2 +
+                    Math.cos(r(lat1)) *
+                    Math.cos(r(lat2)) *
+                    Math.sin(dLon/2)**2;
+
                   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
                 }
 
@@ -973,10 +1636,12 @@ jobs:
                     naturmark:"Naturmark",
                     grasarmering:"Gräsarmering"
                   };
+
                   return m[v] || v || "Skötselyta";
                 }
 
                 let toastTimer;
+
                 function showToast(t) {
                   const el = document.getElementById("toast");
                   el.textContent = t;
