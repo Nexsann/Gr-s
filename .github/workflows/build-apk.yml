@@ -26,10 +26,10 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create Android project
+      - name: Create clean native Android project
         run: |
           rm -rf app
-          mkdir -p app/src/main/java/se/skotselytor/gps
+          mkdir -p app/src/main/java/se/skotselytor/gpsclean
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
 
@@ -43,9 +43,6 @@ jobs:
             echo '{"type":"FeatureCollection","features":[]}' > app/src/main/assets/skotselytor.geojson
           fi
 
-          curl -L --retry 3 "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" -o app/src/main/assets/leaflet.css
-          curl -L --retry 3 "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" -o app/src/main/assets/leaflet.js
-
           cat > settings.gradle <<'EOF'
           pluginManagement {
               repositories {
@@ -54,6 +51,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -61,7 +59,8 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "SkotselytorGPS"
+
+          rootProject.name = "SkotselytorGPSClean"
           include ":app"
           EOF
 
@@ -77,16 +76,20 @@ jobs:
           }
 
           android {
-              namespace "se.skotselytor.gps"
+              namespace "se.skotselytor.gpsclean"
               compileSdk 35
 
               defaultConfig {
-                  applicationId "se.skotselytor.gps"
+                  applicationId "se.skotselytor.gpsclean"
                   minSdk 26
                   targetSdk 35
-                  versionCode 17
-                  versionName "2.6-offline"
+                  versionCode 1
+                  versionName "3.0-clean"
               }
+          }
+
+          dependencies {
+              implementation "org.osmdroid:osmdroid-android:6.1.20"
           }
           EOF
 
@@ -112,14 +115,10 @@ jobs:
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-              <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor GPS"
+                  android:label="Skötselytor GPS Clean"
                   android:usesCleartextTraffic="true"
                   android:hardwareAccelerated="true">
 
@@ -133,260 +132,88 @@ jobs:
                       </intent-filter>
                   </activity>
 
-                  <service
-                      android:name=".BackgroundLocationService"
-                      android:enabled="true"
-                      android:exported="false"
-                      android:foregroundServiceType="location" />
-
               </application>
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/gps/BackgroundLocationService.java <<'EOF'
-          package se.skotselytor.gps;
+          cat > app/src/main/java/se/skotselytor/gpsclean/MainActivity.java <<'EOF'
+          package se.skotselytor.gpsclean;
 
           import android.Manifest;
-          import android.app.Notification;
-          import android.app.NotificationChannel;
-          import android.app.NotificationManager;
-          import android.app.Service;
+          import android.app.Activity;
+          import android.app.AlertDialog;
           import android.content.Context;
-          import android.content.Intent;
           import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
+          import android.graphics.Color;
           import android.location.Location;
           import android.location.LocationListener;
           import android.location.LocationManager;
           import android.os.Build;
           import android.os.Bundle;
-          import android.os.IBinder;
-          import android.os.PowerManager;
-
-          import org.json.JSONArray;
-          import org.json.JSONObject;
-
-          public class BackgroundLocationService extends Service implements LocationListener {
-              public static final String ACTION_START = "se.skotselytor.gps.START_TRACKING";
-              public static final String ACTION_STOP = "se.skotselytor.gps.STOP_TRACKING";
-
-              private static final String CHANNEL_ID = "skotselytor_gps_tracking";
-              private static final int NOTIFICATION_ID = 2404;
-              private static final String PREFS = "skotselytor_native";
-              private static final String TRACK_KEY = "native_track";
-
-              private static final float MIN_DISTANCE_METERS = 2.5f;
-              private static final long MIN_TIME_MS = 2500L;
-              private static final float MAX_ACCURACY = 80f;
-              private static final float MAX_JUMP_METERS = 120f;
-
-              private LocationManager locationManager;
-              private Location lastLocation;
-              private PowerManager.WakeLock wakeLock;
-
-              @Override
-              public void onCreate() {
-                  super.onCreate();
-                  createNotificationChannel();
-                  locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-              }
-
-              @Override
-              public int onStartCommand(Intent intent, int flags, int startId) {
-                  if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-                      stopTracking();
-                      stopSelf();
-                      return START_NOT_STICKY;
-                  }
-
-                  startForeground(NOTIFICATION_ID, buildNotification());
-                  acquireWakeLock();
-                  startTracking();
-                  return START_STICKY;
-              }
-
-              private void acquireWakeLock() {
-                  try {
-                      PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-                      if (pm != null && wakeLock == null) {
-                          wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SkotselytorGPS:Tracking");
-                          wakeLock.setReferenceCounted(false);
-                          wakeLock.acquire(6 * 60 * 60 * 1000L);
-                      }
-                  } catch (Exception ignored) {}
-              }
-
-              private void releaseWakeLock() {
-                  try {
-                      if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-                  } catch (Exception ignored) {}
-                  wakeLock = null;
-              }
-
-              private void startTracking() {
-                  if (Build.VERSION.SDK_INT >= 23) {
-                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-                          checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                          stopSelf();
-                          return;
-                      }
-                  }
-
-                  try {
-                      locationManager.requestLocationUpdates(
-                          LocationManager.GPS_PROVIDER,
-                          MIN_TIME_MS,
-                          MIN_DISTANCE_METERS,
-                          this
-                      );
-                  } catch (Exception ignored) {}
-
-                  try {
-                      locationManager.requestLocationUpdates(
-                          LocationManager.NETWORK_PROVIDER,
-                          MIN_TIME_MS,
-                          MIN_DISTANCE_METERS,
-                          this
-                      );
-                  } catch (Exception ignored) {}
-              }
-
-              private void stopTracking() {
-                  try {
-                      if (locationManager != null) locationManager.removeUpdates(this);
-                  } catch (Exception ignored) {}
-
-                  releaseWakeLock();
-
-                  try {
-                      stopForeground(true);
-                  } catch (Exception ignored) {}
-              }
-
-              @Override
-              public void onLocationChanged(Location location) {
-                  if (location == null) return;
-
-                  float accuracy = location.hasAccuracy() ? location.getAccuracy() : 999f;
-                  if (accuracy > MAX_ACCURACY) return;
-
-                  if (lastLocation != null) {
-                      float distance = lastLocation.distanceTo(location);
-                      if (distance < MIN_DISTANCE_METERS) return;
-                      if (distance > MAX_JUMP_METERS && accuracy > 25f) return;
-                  }
-
-                  saveLocation(location);
-                  lastLocation = location;
-              }
-
-              private void saveLocation(Location loc) {
-                  try {
-                      SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-                      JSONArray arr = new JSONArray(prefs.getString(TRACK_KEY, "[]"));
-
-                      JSONObject o = new JSONObject();
-                      o.put("lat", loc.getLatitude());
-                      o.put("lon", loc.getLongitude());
-                      o.put("accuracy", Math.round(loc.hasAccuracy() ? loc.getAccuracy() : 0));
-                      o.put("heading", loc.hasBearing() ? loc.getBearing() : JSONObject.NULL);
-                      o.put("speed", loc.hasSpeed() ? loc.getSpeed() : JSONObject.NULL);
-                      o.put("time", System.currentTimeMillis());
-                      o.put("native", true);
-
-                      arr.put(o);
-
-                      while (arr.length() > 25000) {
-                          arr.remove(0);
-                      }
-
-                      prefs.edit().putString(TRACK_KEY, arr.toString()).apply();
-                  } catch (Exception ignored) {}
-              }
-
-              private Notification buildNotification() {
-                  Notification.Builder b;
-
-                  if (Build.VERSION.SDK_INT >= 26) {
-                      b = new Notification.Builder(this, CHANNEL_ID);
-                  } else {
-                      b = new Notification.Builder(this);
-                  }
-
-                  return b
-                      .setContentTitle("Skötselytor GPS")
-                      .setContentText("Spårning är aktiv i bakgrunden")
-                      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                      .setOngoing(true)
-                      .setShowWhen(false)
-                      .build();
-              }
-
-              private void createNotificationChannel() {
-                  if (Build.VERSION.SDK_INT >= 26) {
-                      NotificationChannel channel = new NotificationChannel(
-                          CHANNEL_ID,
-                          "GPS-spårning",
-                          NotificationManager.IMPORTANCE_LOW
-                      );
-
-                      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                      if (nm != null) nm.createNotificationChannel(channel);
-                  }
-              }
-
-              @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
-              @Override public void onProviderEnabled(String provider) {}
-              @Override public void onProviderDisabled(String provider) {}
-
-              @Override
-              public IBinder onBind(Intent intent) {
-                  return null;
-              }
-
-              @Override
-              public void onDestroy() {
-                  stopTracking();
-                  super.onDestroy();
-              }
-          }
-          EOF
-
-          cat > app/src/main/java/se/skotselytor/gps/MainActivity.java <<'EOF'
-          package se.skotselytor.gps;
-
-          import android.Manifest;
-          import android.annotation.SuppressLint;
-          import android.app.Activity;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.content.pm.PackageManager;
-          import android.os.Build;
-          import android.os.Bundle;
+          import android.preference.PreferenceManager;
+          import android.view.Gravity;
           import android.view.View;
           import android.view.Window;
           import android.view.WindowInsets;
           import android.view.WindowInsetsController;
           import android.view.WindowManager;
-          import android.webkit.GeolocationPermissions;
-          import android.webkit.JavascriptInterface;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+          import org.osmdroid.config.Configuration;
+          import org.osmdroid.events.MapEventsReceiver;
+          import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+          import org.osmdroid.util.BoundingBox;
+          import org.osmdroid.util.GeoPoint;
+          import org.osmdroid.views.MapView;
+          import org.osmdroid.views.overlay.FolderOverlay;
+          import org.osmdroid.views.overlay.MapEventsOverlay;
+          import org.osmdroid.views.overlay.Marker;
+          import org.osmdroid.views.overlay.Polygon;
+          import org.osmdroid.views.overlay.Polyline;
 
           import java.io.ByteArrayOutputStream;
           import java.io.InputStream;
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.List;
+          import java.util.Map;
 
-          public class MainActivity extends Activity {
-              private static final int LOCATION_REQUEST = 1001;
-              private static final int NOTIFICATION_REQUEST = 1002;
+          public class MainActivity extends Activity implements LocationListener {
+              private static final int REQ_LOCATION = 1001;
+              private static final String PREFS = "skotselytor_clean";
+              private static final String PINS_KEY = "pins";
+              private static final String TRACK_KEY = "track";
 
-              private WebView webView;
-              private GeolocationPermissions.Callback geoCallback;
-              private String geoOrigin;
+              private MapView map;
+              private TextView statusText;
+              private TextView gpsText;
+              private TextView countText;
 
-              @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
+              private FolderOverlay surfaceOverlay;
+              private FolderOverlay pinOverlay;
+              private FolderOverlay gpsOverlay;
+              private Polyline routeLine;
+              private Marker gpsMarker;
+
+              private LocationManager locationManager;
+              private Location lastLocation;
+              private boolean followGps = false;
+
+              private final ArrayList<GeoPoint> routePoints = new ArrayList<>();
+              private final Map<String, Marker> pinMarkers = new HashMap<>();
+
+              private double minLat = 999;
+              private double minLon = 999;
+              private double maxLat = -999;
+              private double maxLon = -999;
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
@@ -395,77 +222,171 @@ jobs:
                   getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
                   hideSystemBars();
 
-                  requestBasicPermissions();
+                  Configuration.getInstance().load(this, PreferenceManager.getDefaultSharedPreferences(this));
+                  Configuration.getInstance().setUserAgentValue(getPackageName());
 
-                  webView = new WebView(this);
-                  setContentView(webView);
+                  FrameLayout root = new FrameLayout(this);
 
-                  WebSettings s = webView.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  s.setDatabaseEnabled(true);
-                  s.setGeolocationEnabled(true);
-                  s.setAllowFileAccess(true);
-                  s.setAllowContentAccess(true);
-                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                  s.setCacheMode(WebSettings.LOAD_DEFAULT);
+                  map = new MapView(this);
+                  map.setTileSource(TileSourceFactory.MAPNIK);
+                  map.setMultiTouchControls(true);
+                  map.setTilesScaledToDpi(true);
+                  map.getController().setZoom(14.5);
+                  map.getController().setCenter(new GeoPoint(58.4108, 15.6214));
 
-                  webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
+                  root.addView(map, new FrameLayout.LayoutParams(
+                      FrameLayout.LayoutParams.MATCH_PARENT,
+                      FrameLayout.LayoutParams.MATCH_PARENT
+                  ));
 
-                  webView.setWebViewClient(new WebViewClient() {
+                  surfaceOverlay = new FolderOverlay();
+                  pinOverlay = new FolderOverlay();
+                  gpsOverlay = new FolderOverlay();
+
+                  map.getOverlays().add(surfaceOverlay);
+                  map.getOverlays().add(pinOverlay);
+                  map.getOverlays().add(gpsOverlay);
+
+                  MapEventsOverlay events = new MapEventsOverlay(new MapEventsReceiver() {
                       @Override
-                      public void onPageFinished(WebView view, String url) {
-                          super.onPageFinished(view, url);
-                          injectNativeTrack();
+                      public boolean singleTapConfirmedHelper(GeoPoint p) {
+                          return false;
+                      }
+
+                      @Override
+                      public boolean longPressHelper(GeoPoint p) {
+                          addPin(p, "Handjagare krävs", "");
+                          return true;
+                      }
+                  });
+                  map.getOverlays().add(events);
+
+                  LinearLayout top = new LinearLayout(this);
+                  top.setOrientation(LinearLayout.VERTICAL);
+                  top.setPadding(16, 24, 16, 12);
+                  top.setBackgroundColor(Color.argb(235, 2, 6, 23));
+
+                  TextView title = new TextView(this);
+                  title.setText("Skötselytor GPS Clean");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(18);
+                  title.setGravity(Gravity.CENTER_VERTICAL);
+                  title.setTypeface(null, 1);
+
+                  statusText = new TextView(this);
+                  statusText.setText("Startar...");
+                  statusText.setTextColor(Color.rgb(203, 213, 225));
+                  statusText.setTextSize(12);
+
+                  LinearLayout buttons = new LinearLayout(this);
+                  buttons.setOrientation(LinearLayout.HORIZONTAL);
+                  buttons.setGravity(Gravity.CENTER);
+                  buttons.setPadding(0, 10, 0, 0);
+
+                  Button gpsBtn = makeButton("GPS");
+                  Button pinBtn = makeButton("Nål här");
+                  Button allBtn = makeButton("Visa allt");
+                  Button clearBtn = makeButton("Rensa");
+
+                  buttons.addView(gpsBtn);
+                  buttons.addView(pinBtn);
+                  buttons.addView(allBtn);
+                  buttons.addView(clearBtn);
+
+                  LinearLayout stats = new LinearLayout(this);
+                  stats.setOrientation(LinearLayout.HORIZONTAL);
+                  stats.setPadding(0, 10, 0, 0);
+
+                  gpsText = smallBox("GPS: ej aktiv");
+                  countText = smallBox("Ytor: 0");
+
+                  stats.addView(gpsText);
+                  stats.addView(countText);
+
+                  top.addView(title);
+                  top.addView(statusText);
+                  top.addView(buttons);
+                  top.addView(stats);
+
+                  FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
+                      FrameLayout.LayoutParams.MATCH_PARENT,
+                      FrameLayout.LayoutParams.WRAP_CONTENT
+                  );
+                  topParams.gravity = Gravity.TOP;
+                  root.addView(top, topParams);
+
+                  setContentView(root);
+
+                  gpsBtn.setOnClickListener(v -> {
+                      followGps = true;
+                      startGps();
+                      if (lastLocation != null) {
+                          GeoPoint p = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
+                          map.getController().animateTo(p);
+                          map.getController().setZoom(Math.max(map.getZoomLevelDouble(), 18.0));
                       }
                   });
 
-                  webView.setWebChromeClient(new WebChromeClient() {
-                      @Override
-                      public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                          geoOrigin = origin;
-                          geoCallback = callback;
-
-                          boolean granted = false;
-                          if (Build.VERSION.SDK_INT >= 23) {
-                              granted =
-                                  checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                                  checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-                          } else {
-                              granted = true;
-                          }
-
-                          if (granted) {
-                              callback.invoke(origin, true, false);
-                          } else if (Build.VERSION.SDK_INT >= 23) {
-                              requestPermissions(new String[] {
-                                  Manifest.permission.ACCESS_FINE_LOCATION,
-                                  Manifest.permission.ACCESS_COARSE_LOCATION
-                              }, LOCATION_REQUEST);
-                          }
+                  pinBtn.setOnClickListener(v -> {
+                      if (lastLocation == null) {
+                          toast("Ingen GPS-position ännu");
+                          startGps();
+                          return;
                       }
+                      addPin(new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude()), "Handjagare krävs", "");
                   });
 
-                  webView.loadUrl("file:///android_asset/index.html");
+                  allBtn.setOnClickListener(v -> zoomToAll());
+
+                  clearBtn.setOnClickListener(v -> new AlertDialog.Builder(this)
+                      .setTitle("Rensa?")
+                      .setMessage("Rensa rutt och nålar?")
+                      .setNegativeButton("Avbryt", null)
+                      .setPositiveButton("Rensa", (d, w) -> {
+                          routePoints.clear();
+                          pinMarkers.clear();
+                          pinOverlay.closeAllInfoWindows();
+                          pinOverlay.getItems().clear();
+                          gpsOverlay.remove(routeLine);
+                          routeLine = null;
+                          getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                              .putString(PINS_KEY, "[]")
+                              .putString(TRACK_KEY, "[]")
+                              .apply();
+                          map.invalidate();
+                          toast("Rensat");
+                      })
+                      .show());
+
+                  loadSavedPins();
+                  loadSavedTrack();
+                  loadSkotselytor();
+                  startGps();
               }
 
-              private void requestBasicPermissions() {
-                  if (Build.VERSION.SDK_INT >= 23) {
-                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(new String[] {
-                              Manifest.permission.ACCESS_FINE_LOCATION,
-                              Manifest.permission.ACCESS_COARSE_LOCATION
-                          }, LOCATION_REQUEST);
-                      }
-                  }
+              private Button makeButton(String text) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setTextSize(12);
+                  b.setAllCaps(false);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+                  lp.setMargins(4, 0, 4, 0);
+                  b.setLayoutParams(lp);
+                  return b;
+              }
 
-                  if (Build.VERSION.SDK_INT >= 33) {
-                      if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(new String[] {
-                              Manifest.permission.POST_NOTIFICATIONS
-                          }, NOTIFICATION_REQUEST);
-                      }
-                  }
+              private TextView smallBox(String text) {
+                  TextView t = new TextView(this);
+                  t.setText(text);
+                  t.setTextColor(Color.WHITE);
+                  t.setTextSize(12);
+                  t.setGravity(Gravity.CENTER);
+                  t.setPadding(10, 8, 10, 8);
+                  t.setBackgroundColor(Color.argb(120, 15, 23, 42));
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+                  lp.setMargins(4, 0, 4, 0);
+                  t.setLayoutParams(lp);
+                  return t;
               }
 
               private void hideSystemBars() {
@@ -487,1600 +408,454 @@ jobs:
                   );
               }
 
-              @Override
-              protected void onResume() {
-                  super.onResume();
-                  hideSystemBars();
-                  injectNativeTrack();
+              private void loadSkotselytor() {
+                  statusText.setText("Läser offline-filen...");
+
+                  new Thread(() -> {
+                      int count = 0;
+
+                      try {
+                          String json = readAsset("skotselytor.geojson");
+                          JSONObject root = new JSONObject(json);
+                          JSONArray features = root.optJSONArray("features");
+
+                          if (features == null) {
+                              throw new Exception("features saknas");
+                          }
+
+                          ArrayList<Polygon> polygons = new ArrayList<>();
+
+                          for (int i = 0; i < features.length(); i++) {
+                              JSONObject f = features.optJSONObject(i);
+                              if (f == null) continue;
+
+                              JSONObject props = f.optJSONObject("properties");
+                              JSONObject geom = f.optJSONObject("geometry");
+                              if (geom == null) continue;
+
+                              String type = geom.optString("type", "");
+                              JSONArray coordinates = geom.optJSONArray("coordinates");
+                              if (coordinates == null) continue;
+
+                              if ("Polygon".equalsIgnoreCase(type)) {
+                                  Polygon p = createPolygonFromRing(coordinates.optJSONArray(0), props);
+                                  if (p != null) {
+                                      polygons.add(p);
+                                      count++;
+                                  }
+                              } else if ("MultiPolygon".equalsIgnoreCase(type)) {
+                                  for (int m = 0; m < coordinates.length(); m++) {
+                                      JSONArray poly = coordinates.optJSONArray(m);
+                                      if (poly == null) continue;
+                                      Polygon p = createPolygonFromRing(poly.optJSONArray(0), props);
+                                      if (p != null) {
+                                          polygons.add(p);
+                                          count++;
+                                      }
+                                  }
+                              }
+                          }
+
+                          int finalCount = count;
+
+                          runOnUiThread(() -> {
+                              surfaceOverlay.getItems().clear();
+
+                              for (Polygon p : polygons) {
+                                  surfaceOverlay.add(p);
+                              }
+
+                              countText.setText("Ytor: " + finalCount);
+                              statusText.setText("Offline-data laddad: " + finalCount + " ytor");
+                              zoomToAll();
+                              map.invalidate();
+                          });
+
+                      } catch (Exception e) {
+                          runOnUiThread(() -> {
+                              statusText.setText("Kunde inte läsa offline-filen");
+                              toast("Fel i offline-filen");
+                          });
+                      }
+                  }).start();
               }
 
-              @Override
-              public void onWindowFocusChanged(boolean hasFocus) {
-                  super.onWindowFocusChanged(hasFocus);
-                  if (hasFocus) hideSystemBars();
-              }
-
-              private void injectNativeTrack() {
+              private Polygon createPolygonFromRing(JSONArray ring, JSONObject props) {
                   try {
-                      if (webView == null) return;
+                      if (ring == null || ring.length() < 3) return null;
 
-                      SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
-                      String nativeTrack = prefs.getString("native_track", "[]");
+                      ArrayList<GeoPoint> pts = new ArrayList<>();
+                      int len = ring.length();
 
-                      String escaped = nativeTrack
-                          .replace("\\", "\\\\")
-                          .replace("'", "\\'")
-                          .replace("\n", "");
+                      int step = 1;
+                      if (len > 1000) step = 6;
+                      else if (len > 500) step = 4;
+                      else if (len > 250) step = 2;
 
-                      String js = "try{window.mergeNativeTrack&&window.mergeNativeTrack('" + escaped + "');}catch(e){console.log(e);}";
+                      for (int i = 0; i < len; i += step) {
+                          JSONArray c = ring.optJSONArray(i);
+                          if (c == null || c.length() < 2) continue;
 
-                      if (Build.VERSION.SDK_INT >= 19) {
-                          webView.evaluateJavascript(js, null);
-                      } else {
-                          webView.loadUrl("javascript:" + js);
+                          double lon = c.optDouble(0);
+                          double lat = c.optDouble(1);
+
+                          if (lat < 55 || lat > 70 || lon < 10 || lon > 25) continue;
+
+                          pts.add(new GeoPoint(lat, lon));
+
+                          minLat = Math.min(minLat, lat);
+                          minLon = Math.min(minLon, lon);
+                          maxLat = Math.max(maxLat, lat);
+                          maxLon = Math.max(maxLon, lon);
+                      }
+
+                      if (pts.size() < 3) return null;
+
+                      Polygon polygon = new Polygon(map);
+                      polygon.setPoints(pts);
+                      polygon.setStrokeWidth(1.2f);
+                      polygon.setStrokeColor(Color.argb(180, 8, 46, 92));
+                      polygon.setFillColor(fillColor(props));
+                      polygon.setInfoWindow(null);
+
+                      polygon.setOnClickListener((poly, mapView, eventPos) -> {
+                          showAreaInfo(props);
+                          return true;
+                      });
+
+                      return polygon;
+                  } catch (Exception e) {
+                      return null;
+                  }
+              }
+
+              private int fillColor(JSONObject props) {
+                  String sub = "";
+                  if (props != null) {
+                      sub = props.optString("SUBTYP", props.optString("TYP", "")).toLowerCase();
+                  }
+
+                  if (sub.contains("bruks")) return Color.argb(95, 34, 197, 94);
+                  if (sub.contains("äng") || sub.contains("ang") || sub.contains("hög")) return Color.argb(90, 234, 179, 8);
+                  if (sub.contains("plantering")) return Color.argb(80, 168, 85, 247);
+                  return Color.argb(65, 56, 189, 248);
+              }
+
+              private void showAreaInfo(JSONObject p) {
+                  if (p == null) {
+                      toast("Yta saknar info");
+                      return;
+                  }
+
+                  StringBuilder sb = new StringBuilder();
+                  append(sb, "OBJECTID", p.optString("OBJECTID", ""));
+                  append(sb, "TYP", p.optString("TYP", ""));
+                  append(sb, "SUBTYP", p.optString("SUBTYP", ""));
+                  append(sb, "DISTRIKT", p.optString("DISTRIKT", ""));
+                  append(sb, "FÖRVALTAROMRÅDE", p.optString("FORVALTAROMRADE", ""));
+                  append(sb, "FASTIGHET", p.optString("FASTIGHET", ""));
+                  append(sb, "TEAM", p.optString("TEAM", ""));
+                  append(sb, "AREA", p.optString("Shape__Area", ""));
+
+                  new AlertDialog.Builder(this)
+                      .setTitle(p.optString("SUBTYP", "Skötselyta"))
+                      .setMessage(sb.toString())
+                      .setPositiveButton("OK", null)
+                      .show();
+              }
+
+              private void append(StringBuilder sb, String k, String v) {
+                  if (v == null || v.trim().isEmpty() || "null".equalsIgnoreCase(v)) return;
+                  sb.append(k).append(": ").append(v).append("\n");
+              }
+
+              private void zoomToAll() {
+                  if (minLat < 90 && minLon < 90 && maxLat > -90 && maxLon > -90) {
+                      BoundingBox box = new BoundingBox(maxLat, maxLon, minLat, minLon);
+                      map.postDelayed(() -> {
+                          try {
+                              map.zoomToBoundingBox(box, true, 80);
+                          } catch (Exception ignored) {}
+                      }, 250);
+                  }
+              }
+
+              private void startGps() {
+                  if (Build.VERSION.SDK_INT >= 23) {
+                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                          checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[]{
+                              Manifest.permission.ACCESS_FINE_LOCATION,
+                              Manifest.permission.ACCESS_COARSE_LOCATION
+                          }, REQ_LOCATION);
+                          return;
+                      }
+                  }
+
+                  try {
+                      locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+
+                      if (locationManager != null) {
+                          locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1500, 1.5f, this);
+                          locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2500, 3f, this);
+                          gpsText.setText("GPS: startad");
+                      }
+                  } catch (Exception e) {
+                      gpsText.setText("GPS: fel");
+                  }
+              }
+
+              @Override
+              public void onLocationChanged(Location loc) {
+                  if (loc == null) return;
+
+                  float acc = loc.hasAccuracy() ? loc.getAccuracy() : 999f;
+                  gpsText.setText("GPS: ±" + Math.round(acc) + " m");
+
+                  if (acc > 80) return;
+
+                  if (lastLocation != null) {
+                      float d = lastLocation.distanceTo(loc);
+                      if (d < 1.5f) return;
+                      if (d > 140f && acc > 25f) return;
+                  }
+
+                  lastLocation = loc;
+
+                  GeoPoint p = new GeoPoint(loc.getLatitude(), loc.getLongitude());
+                  routePoints.add(p);
+
+                  drawGps(p);
+                  drawRoute();
+                  saveTrack();
+
+                  if (followGps) {
+                      map.getController().animateTo(p);
+                  }
+              }
+
+              private void drawGps(GeoPoint p) {
+                  if (gpsMarker == null) {
+                      gpsMarker = new Marker(map);
+                      gpsMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER);
+                      gpsMarker.setTitle("Min position");
+                      gpsOverlay.add(gpsMarker);
+                  }
+
+                  gpsMarker.setPosition(p);
+                  map.invalidate();
+              }
+
+              private void drawRoute() {
+                  if (routeLine == null) {
+                      routeLine = new Polyline(map);
+                      routeLine.setColor(Color.rgb(14, 165, 233));
+                      routeLine.setWidth(6f);
+                      gpsOverlay.add(routeLine);
+                  }
+
+                  routeLine.setPoints(routePoints);
+                  map.invalidate();
+              }
+
+              private void addPin(GeoPoint p, String type, String comment) {
+                  String id = "pin_" + System.currentTimeMillis();
+
+                  Marker m = new Marker(map);
+                  m.setPosition(p);
+                  m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                  m.setTitle(type);
+                  m.setSnippet(comment == null || comment.isEmpty() ? "Nål skapad" : comment);
+
+                  m.setOnMarkerClickListener((marker, mapView) -> {
+                      new AlertDialog.Builder(this)
+                          .setTitle(marker.getTitle())
+                          .setMessage(
+                              marker.getSnippet() +
+                              "\n\nLat: " + marker.getPosition().getLatitude() +
+                              "\nLon: " + marker.getPosition().getLongitude()
+                          )
+                          .setNegativeButton("Stäng", null)
+                          .setPositiveButton("Ta bort", (d, w) -> {
+                              pinOverlay.remove(marker);
+                              pinMarkers.remove(id);
+                              savePins();
+                              map.invalidate();
+                          })
+                          .show();
+                      return true;
+                  });
+
+                  pinMarkers.put(id, m);
+                  pinOverlay.add(m);
+                  savePins();
+                  map.invalidate();
+                  toast("Nål sparad");
+              }
+
+              private void savePins() {
+                  try {
+                      JSONArray arr = new JSONArray();
+
+                      for (Map.Entry<String, Marker> e : pinMarkers.entrySet()) {
+                          Marker m = e.getValue();
+                          JSONObject o = new JSONObject();
+                          o.put("id", e.getKey());
+                          o.put("lat", m.getPosition().getLatitude());
+                          o.put("lon", m.getPosition().getLongitude());
+                          o.put("title", m.getTitle());
+                          o.put("snippet", m.getSnippet());
+                          arr.put(o);
+                      }
+
+                      getSharedPreferences(PREFS, MODE_PRIVATE)
+                          .edit()
+                          .putString(PINS_KEY, arr.toString())
+                          .apply();
+                  } catch (Exception ignored) {}
+              }
+
+              private void loadSavedPins() {
+                  try {
+                      String s = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PINS_KEY, "[]");
+                      JSONArray arr = new JSONArray(s);
+
+                      for (int i = 0; i < arr.length(); i++) {
+                          JSONObject o = arr.optJSONObject(i);
+                          if (o == null) continue;
+
+                          String id = o.optString("id", "pin_" + i);
+                          GeoPoint p = new GeoPoint(o.optDouble("lat"), o.optDouble("lon"));
+
+                          Marker m = new Marker(map);
+                          m.setPosition(p);
+                          m.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                          m.setTitle(o.optString("title", "Nål"));
+                          m.setSnippet(o.optString("snippet", ""));
+
+                          m.setOnMarkerClickListener((marker, mapView) -> {
+                              new AlertDialog.Builder(this)
+                                  .setTitle(marker.getTitle())
+                                  .setMessage(
+                                      marker.getSnippet() +
+                                      "\n\nLat: " + marker.getPosition().getLatitude() +
+                                      "\nLon: " + marker.getPosition().getLongitude()
+                                  )
+                                  .setPositiveButton("OK", null)
+                                  .show();
+                              return true;
+                          });
+
+                          pinMarkers.put(id, m);
+                          pinOverlay.add(m);
                       }
                   } catch (Exception ignored) {}
+              }
+
+              private void saveTrack() {
+                  try {
+                      JSONArray arr = new JSONArray();
+
+                      int start = Math.max(0, routePoints.size() - 10000);
+
+                      for (int i = start; i < routePoints.size(); i++) {
+                          GeoPoint p = routePoints.get(i);
+                          JSONObject o = new JSONObject();
+                          o.put("lat", p.getLatitude());
+                          o.put("lon", p.getLongitude());
+                          arr.put(o);
+                      }
+
+                      getSharedPreferences(PREFS, MODE_PRIVATE)
+                          .edit()
+                          .putString(TRACK_KEY, arr.toString())
+                          .apply();
+                  } catch (Exception ignored) {}
+              }
+
+              private void loadSavedTrack() {
+                  try {
+                      String s = getSharedPreferences(PREFS, MODE_PRIVATE).getString(TRACK_KEY, "[]");
+                      JSONArray arr = new JSONArray(s);
+
+                      for (int i = 0; i < arr.length(); i++) {
+                          JSONObject o = arr.optJSONObject(i);
+                          if (o == null) continue;
+
+                          routePoints.add(new GeoPoint(o.optDouble("lat"), o.optDouble("lon")));
+                      }
+
+                      if (!routePoints.isEmpty()) {
+                          drawRoute();
+                      }
+                  } catch (Exception ignored) {}
+              }
+
+              private String readAsset(String name) throws Exception {
+                  InputStream is = getAssets().open(name);
+                  ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                  byte[] buffer = new byte[8192];
+                  int read;
+
+                  while ((read = is.read(buffer)) != -1) {
+                      bos.write(buffer, 0, read);
+                  }
+
+                  is.close();
+                  return bos.toString("UTF-8");
               }
 
               @Override
               public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
                   super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
-                  if (requestCode == LOCATION_REQUEST) {
-                      boolean granted = false;
+                  if (requestCode == REQ_LOCATION) {
+                      boolean ok = false;
 
-                      for (int result : grantResults) {
-                          if (result == PackageManager.PERMISSION_GRANTED) {
-                              granted = true;
-                              break;
-                          }
+                      for (int r : grantResults) {
+                          if (r == PackageManager.PERMISSION_GRANTED) ok = true;
                       }
 
-                      if (geoCallback != null && geoOrigin != null) {
-                          geoCallback.invoke(geoOrigin, granted, false);
-                          geoCallback = null;
-                          geoOrigin = null;
-                      }
-                  }
-              }
-
-              public class AndroidBridge {
-                  @JavascriptInterface
-                  public void startBackgroundTracking() {
-                      Intent i = new Intent(MainActivity.this, BackgroundLocationService.class);
-                      i.setAction(BackgroundLocationService.ACTION_START);
-
-                      if (Build.VERSION.SDK_INT >= 26) {
-                          startForegroundService(i);
+                      if (ok) {
+                          startGps();
                       } else {
-                          startService(i);
+                          gpsText.setText("GPS: nekad");
                       }
-                  }
-
-                  @JavascriptInterface
-                  public void stopBackgroundTracking() {
-                      Intent i = new Intent(MainActivity.this, BackgroundLocationService.class);
-                      i.setAction(BackgroundLocationService.ACTION_STOP);
-                      startService(i);
-                  }
-
-                  @JavascriptInterface
-                  public String getNativeTrack() {
-                      SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
-                      return prefs.getString("native_track", "[]");
-                  }
-
-                  @JavascriptInterface
-                  public void clearNativeTrack() {
-                      SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
-                      prefs.edit().putString("native_track", "[]").apply();
-                  }
-
-                  @JavascriptInterface
-                  public String readAsset(String filename) {
-                      try {
-                          InputStream is = getAssets().open(filename);
-                          ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                          byte[] buffer = new byte[8192];
-                          int read;
-
-                          while ((read = is.read(buffer)) != -1) {
-                              bos.write(buffer, 0, read);
-                          }
-
-                          is.close();
-                          return bos.toString("UTF-8");
-                      } catch (Exception e) {
-                          return "";
-                      }
-                  }
-
-                  @JavascriptInterface
-                  public void shareText(String subject, String text) {
-                      Intent sendIntent = new Intent();
-                      sendIntent.setAction(Intent.ACTION_SEND);
-                      sendIntent.putExtra(Intent.EXTRA_SUBJECT, subject);
-                      sendIntent.putExtra(Intent.EXTRA_TEXT, text);
-                      sendIntent.setType("text/plain");
-                      startActivity(Intent.createChooser(sendIntent, "Dela rapport"));
                   }
               }
 
               @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
+              protected void onResume() {
+                  super.onResume();
+                  hideSystemBars();
+                  if (map != null) map.onResume();
+              }
+
+              @Override
+              protected void onPause() {
+                  if (map != null) map.onPause();
+                  super.onPause();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  try {
+                      if (locationManager != null) {
+                          locationManager.removeUpdates(this);
+                      }
+                  } catch (Exception ignored) {}
+
+                  super.onDestroy();
+              }
+
+              @Override public void onProviderEnabled(String provider) {}
+              @Override public void onProviderDisabled(String provider) {}
+              @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+              private void toast(String s) {
+                  Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
               }
           }
-          EOF
-
-          cat > app/src/main/assets/index.html <<'EOF'
-          <!doctype html>
-          <html lang="sv">
-          <head>
-            <meta charset="utf-8"/>
-            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-            <title>Skötselytor GPS</title>
-            <link rel="stylesheet" href="leaflet.css">
-            <script src="leaflet.js"></script>
-
-            <style>
-              html, body, #map {
-                margin:0;
-                padding:0;
-                height:100%;
-                width:100%;
-                overflow:hidden;
-                font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-                background:#020617;
-              }
-
-              * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-
-              .topbar {
-                position:fixed;
-                top:0;
-                left:0;
-                right:0;
-                z-index:1000;
-                display:flex;
-                gap:7px;
-                align-items:center;
-                padding:calc(10px + env(safe-area-inset-top)) 10px 10px 10px;
-                background:linear-gradient(135deg,#052e5c,#064e3b);
-                color:white;
-                box-shadow:0 10px 28px rgba(0,0,0,.35);
-              }
-
-              .title { flex:1; min-width:0; line-height:1.05; }
-              .title b { display:block; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-              .title span { display:block; font-size:11px; opacity:.85; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-              button { border:0; border-radius:999px; padding:10px 11px; font-weight:850; font-size:12px; cursor:pointer; }
-              .btn { background:rgba(255,255,255,.16); color:white; }
-              .primary { background:#22c55e; color:#052e16; }
-              .warn { background:#f59e0b !important; color:#451a03 !important; }
-              .danger { background:#ef4444 !important; color:white !important; }
-
-              .stats {
-                position:fixed;
-                top:calc(72px + env(safe-area-inset-top));
-                left:8px;
-                right:8px;
-                z-index:900;
-                display:grid;
-                grid-template-columns:1fr 1fr 1fr;
-                gap:7px;
-                pointer-events:none;
-              }
-
-              .stat {
-                background:rgba(255,255,255,.94);
-                color:#0f172a;
-                border-radius:16px;
-                padding:9px 10px;
-                box-shadow:0 8px 22px rgba(0,0,0,.18);
-                min-width:0;
-              }
-
-              .stat b {
-                display:block;
-                font-size:10px;
-                color:#64748b;
-                text-transform:uppercase;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .stat span {
-                display:block;
-                font-size:14px;
-                font-weight:900;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .bottomBar {
-                position:fixed;
-                z-index:950;
-                left:8px;
-                right:8px;
-                bottom:calc(8px + env(safe-area-inset-bottom));
-                display:grid;
-                grid-template-columns:1fr 1fr 1fr;
-                gap:7px;
-                pointer-events:none;
-              }
-
-              .bottomBar button {
-                pointer-events:auto;
-                border-radius:16px;
-                padding:12px 9px;
-                background:#0f172a;
-                color:white;
-                box-shadow:0 10px 28px rgba(0,0,0,.25);
-              }
-
-              .panel {
-                position:fixed;
-                left:8px;
-                right:8px;
-                bottom:calc(8px + env(safe-area-inset-bottom));
-                z-index:1200;
-                background:white;
-                border-radius:20px;
-                box-shadow:0 18px 44px rgba(0,0,0,.35);
-                display:none;
-                overflow:hidden;
-                max-height:72vh;
-              }
-
-              .panel.open { display:block; }
-
-              .panelHead {
-                padding:14px;
-                border-bottom:1px solid #e2e8f0;
-                display:flex;
-                justify-content:space-between;
-                gap:10px;
-                align-items:flex-start;
-              }
-
-              .panelHead h2 { margin:0; font-size:18px; }
-              .panelHead small { display:block; color:#64748b; margin-top:3px; }
-
-              .panelBody {
-                padding:14px;
-                overflow:auto;
-                max-height:calc(72vh - 64px);
-              }
-
-              .meta {
-                display:grid;
-                grid-template-columns:1fr 1fr;
-                gap:8px;
-                margin-bottom:10px;
-              }
-
-              .meta div {
-                background:#f8fafc;
-                border:1px solid #e2e8f0;
-                border-radius:14px;
-                padding:8px;
-                min-width:0;
-              }
-
-              .meta b {
-                display:block;
-                font-size:10px;
-                color:#64748b;
-                text-transform:uppercase;
-              }
-
-              .meta span {
-                display:block;
-                font-size:13px;
-                font-weight:800;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              input, textarea, select {
-                width:100%;
-                border:1px solid #cbd5e1;
-                border-radius:14px;
-                padding:12px;
-                margin-top:8px;
-                font:inherit;
-                background:white;
-              }
-
-              .statuses {
-                display:grid;
-                grid-template-columns:1fr 1fr;
-                gap:8px;
-                margin-top:10px;
-              }
-
-              .statuses button {
-                border-radius:14px;
-                background:#e2e8f0;
-                color:#0f172a;
-              }
-
-              .statuses button.active {
-                outline:3px solid #0f172a;
-              }
-
-              .save {
-                width:100%;
-                margin-top:10px;
-                background:#082e5c;
-                color:white;
-                border-radius:14px;
-              }
-
-              .delete {
-                width:100%;
-                margin-top:8px;
-                background:#fee2e2;
-                color:#7f1d1d;
-                border-radius:14px;
-              }
-
-              .mini {
-                background:#e2e8f0;
-                color:#0f172a;
-                border-radius:14px;
-                width:100%;
-                margin-top:8px;
-              }
-
-              .hidden { display:none !important; }
-
-              .toast {
-                position:fixed;
-                left:50%;
-                bottom:calc(72px + env(safe-area-inset-bottom));
-                transform:translateX(-50%);
-                z-index:1500;
-                background:#020617;
-                color:white;
-                border-radius:999px;
-                padding:11px 16px;
-                font-weight:900;
-                opacity:0;
-                transition:.2s;
-                white-space:nowrap;
-                box-shadow:0 12px 28px rgba(0,0,0,.3);
-              }
-
-              .toast.show { opacity:1; }
-
-              .hint {
-                position:fixed;
-                left:50%;
-                top:calc(128px + env(safe-area-inset-top));
-                transform:translateX(-50%);
-                z-index:1300;
-                background:#ef4444;
-                color:white;
-                border-radius:999px;
-                padding:10px 14px;
-                font-size:13px;
-                font-weight:900;
-                box-shadow:0 10px 25px rgba(0,0,0,.25);
-                display:none;
-                white-space:nowrap;
-              }
-
-              .hint.show { display:block; }
-
-              .list {
-                display:grid;
-                gap:8px;
-                margin-top:10px;
-              }
-
-              .listItem {
-                background:#f8fafc;
-                border:1px solid #e2e8f0;
-                border-radius:14px;
-                padding:10px;
-              }
-
-              .listItem b { display:block; font-size:13px; }
-              .listItem span { display:block; font-size:12px; color:#64748b; margin-top:3px; }
-
-              .gpsArrow {
-                width:0;
-                height:0;
-                border-left:11px solid transparent;
-                border-right:11px solid transparent;
-                border-bottom:26px solid #0ea5e9;
-                filter:drop-shadow(0 2px 4px rgba(0,0,0,.45));
-                transform-origin:50% 70%;
-              }
-
-              .pinIcon {
-                width:34px;
-                height:34px;
-                border-radius:999px;
-                border:4px solid white;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                color:white;
-                font-weight:1000;
-                box-shadow:0 5px 14px rgba(0,0,0,.35);
-              }
-
-              .leaflet-control-attribution {
-                font-size:9px;
-              }
-            </style>
-          </head>
-
-          <body>
-            <div id="map"></div>
-
-            <div class="topbar">
-              <div class="title">
-                <b>Skötselytor GPS</b>
-                <span id="dataInfo">Läser offline-data...</span>
-              </div>
-              <button class="btn" id="pinBtn">Nål</button>
-              <button class="btn" id="trackBtn">Spåra</button>
-              <button class="primary" id="gpsBtn">GPS</button>
-            </div>
-
-            <div class="stats">
-              <div class="stat"><b>GPS</b><span id="gpsInfo">Ej aktiv</span></div>
-              <div class="stat"><b>Idag</b><span id="todayKm">0,00 km</span></div>
-              <div class="stat"><b>Punkter</b><span id="pointCount">0</span></div>
-            </div>
-
-            <div class="hint" id="pinHint">Tryck på kartan där nålen ska hamna</div>
-
-            <div class="bottomBar">
-              <button id="menuBtn">Meny</button>
-              <button id="pinGpsBtn">Nål här</button>
-              <button id="reportBtn">Rapport</button>
-            </div>
-
-            <div class="panel" id="areaPanel">
-              <div class="panelHead">
-                <div>
-                  <h2 id="areaTitle">Vald yta</h2>
-                  <small>Offline-laddad skötselyta</small>
-                </div>
-                <button id="closeArea">×</button>
-              </div>
-
-              <div class="panelBody">
-                <div class="meta">
-                  <div><b>ID</b><span id="mId">-</span></div>
-                  <div><b>Typ</b><span id="mType">-</span></div>
-                  <div><b>Subtyp</b><span id="mSubType">-</span></div>
-                  <div><b>Team</b><span id="mTeam">-</span></div>
-                  <div><b>Distrikt</b><span id="mDistrict">-</span></div>
-                  <div><b>Area</b><span id="mArea">-</span></div>
-                </div>
-
-                <input id="worker" placeholder="Ditt namn">
-
-                <div class="statuses">
-                  <button data-status="Ej klippt">Ej klippt</button>
-                  <button data-status="Pågår">Pågår</button>
-                  <button data-status="Klippt">Klippt</button>
-                  <button data-status="Problem">Problem</button>
-                </div>
-
-                <textarea id="comment" rows="3" placeholder="Kommentar"></textarea>
-                <button class="save" id="saveAreaBtn">Spara status</button>
-              </div>
-            </div>
-
-            <div class="panel" id="pinPanel">
-              <div class="panelHead">
-                <div>
-                  <h2 id="pinTitle">Egen nål</h2>
-                  <small id="pinSub">Kommentar/avvikelse på kartan</small>
-                </div>
-                <button id="closePin">×</button>
-              </div>
-
-              <div class="panelBody">
-                <div class="meta">
-                  <div><b>Lon/X</b><span id="pinX">-</span></div>
-                  <div><b>Lat/Y</b><span id="pinY">-</span></div>
-                </div>
-
-                <select id="pinType">
-                  <option value="Handjagare krävs">Handjagare krävs</option>
-                  <option value="Hinder">Hinder</option>
-                  <option value="Går ej klippa">Går ej klippa</option>
-                  <option value="Behöver kollas">Behöver kollas</option>
-                  <option value="Annat">Annat</option>
-                </select>
-
-                <textarea id="pinComment" rows="4" placeholder="Kommentar, t.ex. handjagare krävs runt stolpar"></textarea>
-
-                <select id="pinStatus">
-                  <option value="Öppen">Öppen</option>
-                  <option value="Fixad">Fixad</option>
-                </select>
-
-                <button class="mini" id="movePinGpsBtn">Flytta till GPS</button>
-                <button class="save" id="savePinBtn">Spara nål</button>
-                <button class="delete hidden" id="deletePinBtn">Ta bort nål</button>
-              </div>
-            </div>
-
-            <div class="panel" id="menuPanel">
-              <div class="panelHead">
-                <div>
-                  <h2>Meny</h2>
-                  <small>Statistik, rutter och rapport</small>
-                </div>
-                <button id="closeMenu">×</button>
-              </div>
-
-              <div class="panelBody">
-                <div class="meta">
-                  <div><b>Idag</b><span id="menuTodayKm">0,00 km</span></div>
-                  <div><b>Tid</b><span id="menuTodayTime">0 min</span></div>
-                  <div><b>Nålar</b><span id="menuPins">0</span></div>
-                  <div><b>Statusar</b><span id="menuStatuses">0</span></div>
-                </div>
-
-                <button class="save" id="shareReportBtn">Dela rapport</button>
-                <button class="mini" id="fitAllBtn">Visa alla skötselytor</button>
-                <button class="mini" id="clearTodayBtn">Rensa dagens rutt</button>
-                <button class="delete" id="clearAllBtn">Rensa alla rutter</button>
-
-                <div class="list" id="dayList"></div>
-              </div>
-            </div>
-
-            <div class="toast" id="toast">Sparat</div>
-
-            <script>
-              const STORE_KEY = "skotselytor_status_v26";
-              const TRACK_KEY = "skotselytor_track_v26";
-              const PINS_KEY = "skotselytor_pins_v26";
-
-              const OLD_STATUS_KEY = "skotselytor_status_v25";
-              const OLD_TRACK_KEY = "skotselytor_track_v25";
-              const OLD_PINS_KEY = "skotselytor_pins_v25";
-
-              const MAX_ACCURACY = 80;
-              const MIN_DISTANCE = 2.5;
-              const MAX_JUMP = 120;
-
-              let statuses = JSON.parse(localStorage.getItem(STORE_KEY) || localStorage.getItem(OLD_STATUS_KEY) || "{}");
-              let track = JSON.parse(localStorage.getItem(TRACK_KEY) || localStorage.getItem(OLD_TRACK_KEY) || "[]");
-              let pins = JSON.parse(localStorage.getItem(PINS_KEY) || localStorage.getItem(OLD_PINS_KEY) || "[]");
-
-              localStorage.setItem(STORE_KEY, JSON.stringify(statuses));
-              localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-              localStorage.setItem(PINS_KEY, JSON.stringify(pins));
-
-              let map;
-              let skotselLayer;
-              let routeLayer;
-              let pinLayer;
-              let gpsLayer;
-              let accuracyCircle;
-              let gpsMarker;
-              let routeLine;
-
-              let selectedAreaLayer = null;
-              let selectedAreaId = null;
-              let selectedPinId = null;
-              let pendingPinLatLng = null;
-              let areaStatus = "Ej klippt";
-
-              let watchId = null;
-              let tracking = false;
-              let followMode = "none";
-              let addPinMode = false;
-
-              let lastGpsPoint = null;
-              let lastGpsBearing = null;
-              let deviceHeading = null;
-
-              let smooth = {
-                currentLat:null,
-                currentLon:null,
-                targetLat:null,
-                targetLon:null,
-                currentHeading:0,
-                targetHeading:0,
-                animating:false
-              };
-
-              init();
-
-              async function init() {
-                map = L.map("map", {
-                  zoomControl:false,
-                  preferCanvas:true,
-                  inertia:true,
-                  inertiaDeceleration:3500,
-                  wheelDebounceTime:40,
-                  wheelPxPerZoomLevel:90
-                }).setView([58.4108, 15.6214], 13);
-
-                L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                  maxZoom:22,
-                  maxNativeZoom:19,
-                  attribution:"© OpenStreetMap",
-                  updateWhenIdle:true,
-                  keepBuffer:2
-                }).addTo(map);
-
-                L.control.zoom({ position:"bottomright" }).addTo(map);
-
-                routeLayer = L.layerGroup().addTo(map);
-                pinLayer = L.layerGroup().addTo(map);
-                gpsLayer = L.layerGroup().addTo(map);
-
-                bindButtons();
-                bindMap();
-                startCompass();
-
-                redrawTrack();
-                redrawPins();
-                updateStats();
-
-                await loadSkotselytor();
-                setInterval(pollNativeTrack, 2000);
-              }
-
-              async function loadSkotselytor() {
-                try {
-                  document.getElementById("dataInfo").textContent = "Läser skötselytor från mobilen...";
-
-                  let text = "";
-
-                  try {
-                    const res = await fetch("skotselytor.geojson", { cache:"force-cache" });
-                    text = await res.text();
-                  } catch(e) {}
-
-                  if (!text && window.AndroidBridge && window.AndroidBridge.readAsset) {
-                    text = window.AndroidBridge.readAsset("skotselytor.geojson");
-                  }
-
-                  if (!text) throw new Error("Tom GeoJSON");
-
-                  const data = JSON.parse(text);
-                  const count = data && data.features ? data.features.length : 0;
-
-                  skotselLayer = L.geoJSON(data, {
-                    renderer:L.canvas({ padding:0.5 }),
-                    smoothFactor:2.0,
-                    style:featureStyle,
-                    onEachFeature:onEachFeature
-                  }).addTo(map);
-
-                  const bounds = skotselLayer.getBounds();
-
-                  if (bounds && bounds.isValid && bounds.isValid()) {
-                    map.fitBounds(bounds, { padding:[25,25], animate:false });
-                  }
-
-                  document.getElementById("dataInfo").textContent = "Offline-data: " + count + " ytor";
-                  showToast("Offline-karta laddad");
-                } catch(e) {
-                  document.getElementById("dataInfo").textContent = "Kunde inte läsa offline-data";
-                  showToast("Fel: offline-data saknas");
-                  console.log(e);
-                }
-              }
-
-              function featureStyle(feature) {
-                const p = feature.properties || {};
-                const id = getFeatureId(p);
-                const saved = statuses[id];
-
-                if (saved && saved.status === "Klippt") {
-                  return { color:"#16a34a", weight:1.4, fillColor:"#22c55e", fillOpacity:0.42 };
-                }
-
-                if (saved && saved.status === "Pågår") {
-                  return { color:"#f59e0b", weight:1.6, fillColor:"#fbbf24", fillOpacity:0.42 };
-                }
-
-                if (saved && saved.status === "Problem") {
-                  return { color:"#ef4444", weight:1.8, fillColor:"#f87171", fillOpacity:0.48 };
-                }
-
-                const sub = String(p.SUBTYP || p.subtyp || "").toLowerCase();
-
-                if (sub.includes("bruks")) {
-                  return { color:"#0f766e", weight:0.9, fillColor:"#22c55e", fillOpacity:0.22 };
-                }
-
-                if (sub.includes("äng") || sub.includes("ang") || sub.includes("hög")) {
-                  return { color:"#a16207", weight:0.9, fillColor:"#eab308", fillOpacity:0.20 };
-                }
-
-                return { color:"#082e5c", weight:0.8, fillColor:"#38bdf8", fillOpacity:0.16 };
-              }
-
-              function onEachFeature(feature, layer) {
-                layer.on("click", function() {
-                  selectedAreaLayer = layer;
-                  openAreaPanel(feature, layer);
-                });
-              }
-
-              function bindButtons() {
-                document.getElementById("gpsBtn").onclick = gpsButtonClick;
-                document.getElementById("trackBtn").onclick = toggleTrack;
-                document.getElementById("pinBtn").onclick = togglePinMode;
-                document.getElementById("pinGpsBtn").onclick = createPinAtGps;
-                document.getElementById("reportBtn").onclick = openMenu;
-                document.getElementById("menuBtn").onclick = openMenu;
-                document.getElementById("closeMenu").onclick = closeMenu;
-                document.getElementById("closeArea").onclick = () => document.getElementById("areaPanel").classList.remove("open");
-                document.getElementById("closePin").onclick = closePinPanel;
-                document.getElementById("shareReportBtn").onclick = shareReport;
-                document.getElementById("fitAllBtn").onclick = fitAllSkotselytor;
-                document.getElementById("clearTodayBtn").onclick = clearTodayRoute;
-                document.getElementById("clearAllBtn").onclick = clearAllRoutes;
-                document.getElementById("movePinGpsBtn").onclick = movePinToGps;
-                document.getElementById("savePinBtn").onclick = savePin;
-                document.getElementById("deletePinBtn").onclick = deletePin;
-                document.getElementById("saveAreaBtn").onclick = saveAreaStatus;
-
-                document.querySelectorAll("[data-status]").forEach(b => {
-                  b.onclick = () => {
-                    areaStatus = b.dataset.status;
-                    markAreaStatus();
-                  };
-                });
-              }
-
-              function bindMap() {
-                map.on("dragstart zoomstart", () => {
-                  if (followMode !== "none") {
-                    setFollowMode("none", false);
-                    showToast("Fri karta");
-                  }
-                });
-
-                map.on("click", e => {
-                  if (addPinMode) {
-                    createPinAtLatLng(e.latlng, "Nål skapad");
-                    setPinMode(false);
-                  }
-                });
-
-                map.on("contextmenu", e => {
-                  createPinAtLatLng(e.latlng, "Nål skapad");
-                });
-              }
-
-              function startCompass() {
-                const handler = e => {
-                  let h = null;
-
-                  if (typeof e.webkitCompassHeading === "number") {
-                    h = e.webkitCompassHeading;
-                  } else if (typeof e.alpha === "number") {
-                    h = normalizeAngle(360 - e.alpha);
-                  }
-
-                  if (Number.isFinite(h)) {
-                    deviceHeading = h;
-                  }
-                };
-
-                try {
-                  window.addEventListener("deviceorientationabsolute", handler, true);
-                  window.addEventListener("deviceorientation", handler, true);
-                } catch(e) {}
-              }
-
-              function toggleTrack() {
-                tracking ? stopTrack() : startTrack();
-              }
-
-              function startTrack() {
-                tracking = true;
-                setFollowMode("center", false);
-
-                document.getElementById("trackBtn").classList.add("warn");
-                document.getElementById("trackBtn").textContent = "Stoppa";
-
-                try {
-                  if (window.AndroidBridge && window.AndroidBridge.startBackgroundTracking) {
-                    window.AndroidBridge.startBackgroundTracking();
-                  }
-                } catch(e) {}
-
-                if (navigator.geolocation && watchId === null) {
-                  watchId = navigator.geolocation.watchPosition(onPos, err => {
-                    showToast("GPS-fel");
-                    console.log(err);
-                  }, {
-                    enableHighAccuracy:true,
-                    maximumAge:1000,
-                    timeout:10000
-                  });
-                }
-
-                pollNativeTrack();
-                showToast("Spårning startad");
-              }
-
-              function stopTrack() {
-                tracking = false;
-                setFollowMode("none", false);
-
-                if (watchId !== null && navigator.geolocation) {
-                  navigator.geolocation.clearWatch(watchId);
-                  watchId = null;
-                }
-
-                try {
-                  if (window.AndroidBridge && window.AndroidBridge.stopBackgroundTracking) {
-                    window.AndroidBridge.stopBackgroundTracking();
-                  }
-                } catch(e) {}
-
-                document.getElementById("trackBtn").classList.remove("warn");
-                document.getElementById("trackBtn").textContent = "Spåra";
-                showToast("Spårning stoppad");
-              }
-
-              function pollNativeTrack() {
-                try {
-                  if (window.AndroidBridge && window.AndroidBridge.getNativeTrack) {
-                    mergeNativeTrack(window.AndroidBridge.getNativeTrack());
-                  }
-                } catch(e) {}
-              }
-
-              window.mergeNativeTrack = mergeNativeTrack;
-
-              function mergeNativeTrack(nativeTrackText) {
-                try {
-                  const nativeTrack = JSON.parse(nativeTrackText || "[]");
-                  if (!Array.isArray(nativeTrack) || nativeTrack.length === 0) return;
-
-                  const existing = new Set(track.map(p => String(p.time) + "_" + p.lat + "_" + p.lon));
-                  let added = 0;
-
-                  nativeTrack.forEach(p => {
-                    const normalized = {
-                      lat:Number(p.lat),
-                      lon:Number(p.lon),
-                      accuracy:Number(p.accuracy || 0),
-                      heading:p.heading === null || p.heading === undefined ? null : Number(p.heading),
-                      speed:p.speed === null || p.speed === undefined ? null : Number(p.speed),
-                      time:typeof p.time === "number" ? new Date(p.time).toISOString() : p.time,
-                      native:true
-                    };
-
-                    const key = String(normalized.time) + "_" + normalized.lat + "_" + normalized.lon;
-
-                    if (Number.isFinite(normalized.lat) && Number.isFinite(normalized.lon) && !existing.has(key)) {
-                      track.push(normalized);
-                      existing.add(key);
-                      added++;
-                    }
-                  });
-
-                  if (!added) return;
-
-                  track.sort((a,b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-                  localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-
-                  const last = track[track.length - 1];
-
-                  if (last) {
-                    lastGpsPoint = last;
-                    setSmoothTarget(last);
-                  }
-
-                  redrawTrack();
-                  updateStats();
-                } catch(e) {
-                  console.log("mergeNativeTrack error", e);
-                }
-              }
-
-              function onPos(pos) {
-                const c = pos.coords;
-
-                const p = {
-                  lat:c.latitude,
-                  lon:c.longitude,
-                  accuracy:Math.round(c.accuracy || 0),
-                  heading:Number.isFinite(c.heading) ? c.heading : null,
-                  speed:Number.isFinite(c.speed) ? c.speed : null,
-                  time:new Date(pos.timestamp || Date.now()).toISOString()
-                };
-
-                document.getElementById("gpsInfo").textContent = "±" + p.accuracy + " m";
-
-                if (p.accuracy > MAX_ACCURACY) {
-                  showToast("GPS osäker ±" + p.accuracy + " m");
-                  return;
-                }
-
-                const last = track[track.length - 1];
-
-                if (last) {
-                  const d = distance(last.lat,last.lon,p.lat,p.lon);
-
-                  if (d < MIN_DISTANCE) {
-                    lastGpsPoint = p;
-                    setSmoothTarget(p);
-                    return;
-                  }
-
-                  if (d > MAX_JUMP && p.accuracy > 25) {
-                    showToast("GPS-hopp ignorerat");
-                    return;
-                  }
-                }
-
-                if (!Number.isFinite(p.heading) && track.length) {
-                  const prev = track[track.length - 1];
-                  const d = distance(prev.lat, prev.lon, p.lat, p.lon);
-                  if (d >= 1.5) p.heading = bearing(prev.lat, prev.lon, p.lat, p.lon);
-                }
-
-                if (Number.isFinite(p.heading)) lastGpsBearing = p.heading;
-
-                lastGpsPoint = p;
-                track.push(p);
-                localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-
-                setSmoothTarget(p);
-                redrawTrack();
-                updateStats();
-              }
-
-              function setSmoothTarget(p) {
-                smooth.targetLat = p.lat;
-                smooth.targetLon = p.lon;
-                smooth.targetHeading = getBestHeading(p);
-
-                if (smooth.currentLat === null || smooth.currentLon === null) {
-                  smooth.currentLat = p.lat;
-                  smooth.currentLon = p.lon;
-                  smooth.currentHeading = smooth.targetHeading;
-                }
-
-                if (!smooth.animating) {
-                  smooth.animating = true;
-                  requestAnimationFrame(smoothFrame);
-                }
-              }
-
-              function getBestHeading(p) {
-                if (Number.isFinite(deviceHeading)) return deviceHeading;
-                if (p && Number.isFinite(p.heading)) return p.heading;
-                if (Number.isFinite(lastGpsBearing)) return lastGpsBearing;
-                return smooth.currentHeading || 0;
-              }
-
-              function smoothFrame() {
-                if (smooth.targetLat === null || smooth.targetLon === null) {
-                  smooth.animating = false;
-                  return;
-                }
-
-                smooth.targetHeading = getBestHeading(lastGpsPoint);
-
-                const k = 0.15;
-                smooth.currentLat += (smooth.targetLat - smooth.currentLat) * k;
-                smooth.currentLon += (smooth.targetLon - smooth.currentLon) * k;
-                smooth.currentHeading = lerpAngle(smooth.currentHeading, smooth.targetHeading, 0.13);
-
-                drawSmoothGps();
-
-                const remaining = Math.abs(smooth.targetLat - smooth.currentLat) + Math.abs(smooth.targetLon - smooth.currentLon);
-
-                if (remaining > 0.0000002 || tracking) {
-                  requestAnimationFrame(smoothFrame);
-                } else {
-                  smooth.animating = false;
-                }
-              }
-
-              function drawSmoothGps() {
-                if (!Number.isFinite(smooth.currentLat) || !Number.isFinite(smooth.currentLon)) return;
-
-                const latlng = L.latLng(smooth.currentLat, smooth.currentLon);
-                const acc = Math.max(lastGpsPoint && lastGpsPoint.accuracy ? lastGpsPoint.accuracy : 8, 5);
-
-                if (!accuracyCircle) {
-                  accuracyCircle = L.circle(latlng, {
-                    radius:acc,
-                    color:"#38bdf8",
-                    weight:1,
-                    opacity:0.35,
-                    fillColor:"#38bdf8",
-                    fillOpacity:0.08,
-                    interactive:false
-                  }).addTo(gpsLayer);
-                } else {
-                  accuracyCircle.setLatLng(latlng);
-                  accuracyCircle.setRadius(acc);
-                }
-
-                const icon = L.divIcon({
-                  className:"",
-                  html:'<div class="gpsArrow" style="transform:rotate(' + smooth.currentHeading + 'deg)"></div>',
-                  iconSize:[26,32],
-                  iconAnchor:[13,18]
-                });
-
-                if (!gpsMarker) {
-                  gpsMarker = L.marker(latlng, {
-                    icon,
-                    interactive:false,
-                    zIndexOffset:9999
-                  }).addTo(gpsLayer);
-                } else {
-                  gpsMarker.setLatLng(latlng);
-                  gpsMarker.setIcon(icon);
-                }
-
-                maybeUpdateCamera(latlng);
-              }
-
-              function maybeUpdateCamera(latlng) {
-                if (followMode === "none") return;
-                map.panTo(latlng, { animate:true, duration:0.22 });
-              }
-
-              function gpsButtonClick() {
-                if (!tracking) {
-                  startTrack();
-                  setFollowMode("center", true);
-                  return;
-                }
-
-                if (followMode === "none") setFollowMode("center", true);
-                else setFollowMode("none", false);
-              }
-
-              function setFollowMode(mode, jumpNow) {
-                followMode = mode;
-                const btn = document.getElementById("gpsBtn");
-
-                if (mode === "none") {
-                  btn.textContent = "GPS";
-                  btn.classList.remove("warn");
-                } else {
-                  btn.textContent = "Följer";
-                  btn.classList.add("warn");
-                }
-
-                if (jumpNow && lastGpsPoint) {
-                  const latlng = L.latLng(lastGpsPoint.lat, lastGpsPoint.lon);
-                  map.setView(latlng, Math.max(map.getZoom(), 17), { animate:true });
-                  showToast("Centrerad på GPS");
-                }
-              }
-
-              function redrawTrack() {
-                if (routeLine) {
-                  routeLayer.removeLayer(routeLine);
-                  routeLine = null;
-                }
-
-                if (track.length < 2) return;
-
-                routeLine = L.polyline(track.map(p => [p.lat, p.lon]), {
-                  color:"#0ea5e9",
-                  weight:5,
-                  opacity:0.95,
-                  lineCap:"round",
-                  lineJoin:"round",
-                  smoothFactor:1.2,
-                  interactive:false
-                }).addTo(routeLayer);
-              }
-
-              function createPinAtLatLng(latlng, msg) {
-                if (!latlng) {
-                  showToast("Kunde inte läsa plats");
-                  return;
-                }
-
-                const autoPin = {
-                  id:"pin_" + Date.now(),
-                  lat:latlng.lat,
-                  lon:latlng.lng,
-                  type:"Handjagare krävs",
-                  comment:"",
-                  status:"Öppen",
-                  createdAt:new Date().toISOString(),
-                  updatedAt:new Date().toISOString()
-                };
-
-                pins.push(autoPin);
-                selectedPinId = autoPin.id;
-                localStorage.setItem(PINS_KEY, JSON.stringify(pins));
-
-                redrawPins();
-                updateStats();
-                openPinPanelForExisting(autoPin.id);
-                showToast(msg || "Nål skapad");
-              }
-
-              function createPinAtGps() {
-                if (!lastGpsPoint) {
-                  showToast("Starta GPS först");
-                  return;
-                }
-
-                createPinAtLatLng(L.latLng(lastGpsPoint.lat, lastGpsPoint.lon), "Nål skapad vid GPS");
-              }
-
-              function movePinToGps() {
-                if (!lastGpsPoint) {
-                  showToast("Ingen GPS-position ännu");
-                  return;
-                }
-
-                pendingPinLatLng = L.latLng(lastGpsPoint.lat, lastGpsPoint.lon);
-                updatePinCoordsText(pendingPinLatLng);
-                showToast("Nål flyttad till GPS");
-              }
-
-              function openPinPanelForExisting(id) {
-                const p = pins.find(x => x.id === id);
-                if (!p) return;
-
-                selectedPinId = id;
-                pendingPinLatLng = L.latLng(p.lat, p.lon);
-
-                closeMenu();
-                document.getElementById("areaPanel").classList.remove("open");
-
-                document.getElementById("pinTitle").textContent = p.type || "Egen nål";
-                document.getElementById("pinSub").textContent = p.createdAt ? "Skapad: " + new Date(p.createdAt).toLocaleString("sv-SE") : "Sparad nål";
-                updatePinCoordsText(pendingPinLatLng);
-
-                document.getElementById("pinType").value = p.type || "Annat";
-                document.getElementById("pinComment").value = p.comment || "";
-                document.getElementById("pinStatus").value = p.status || "Öppen";
-                document.getElementById("deletePinBtn").classList.remove("hidden");
-                document.getElementById("pinPanel").classList.add("open");
-              }
-
-              function savePin() {
-                if (!pendingPinLatLng) {
-                  showToast("Ingen nålposition vald");
-                  return;
-                }
-
-                const existing = pins.find(x => x.id === selectedPinId);
-
-                const data = {
-                  id:selectedPinId || ("pin_" + Date.now()),
-                  lat:pendingPinLatLng.lat,
-                  lon:pendingPinLatLng.lng,
-                  type:document.getElementById("pinType").value,
-                  comment:document.getElementById("pinComment").value,
-                  status:document.getElementById("pinStatus").value,
-                  createdAt:existing ? existing.createdAt : new Date().toISOString(),
-                  updatedAt:new Date().toISOString()
-                };
-
-                const ix = pins.findIndex(x => x.id === data.id);
-
-                if (ix >= 0) pins[ix] = data;
-                else pins.push(data);
-
-                localStorage.setItem(PINS_KEY, JSON.stringify(pins));
-
-                redrawPins();
-                updateStats();
-                showToast("Nål sparad");
-                closePinPanel();
-              }
-
-              function deletePin() {
-                if (!selectedPinId) return;
-                if (!confirm("Ta bort denna nål?")) return;
-
-                pins = pins.filter(x => x.id !== selectedPinId);
-                localStorage.setItem(PINS_KEY, JSON.stringify(pins));
-                redrawPins();
-                updateStats();
-                closePinPanel();
-                showToast("Nål borttagen");
-              }
-
-              function redrawPins() {
-                pinLayer.clearLayers();
-
-                pins.forEach(p => {
-                  if (!Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lon))) return;
-
-                  const color = pinColor(p.type, p.status);
-                  const icon = L.divIcon({
-                    className:"",
-                    html:'<div class="pinIcon" style="background:' + color + '">!</div>',
-                    iconSize:[34,34],
-                    iconAnchor:[17,17]
-                  });
-
-                  L.marker([p.lat, p.lon], {
-                    icon,
-                    zIndexOffset:5000
-                  }).on("click", () => openPinPanelForExisting(p.id)).addTo(pinLayer);
-                });
-              }
-
-              function pinColor(type,status) {
-                if (status === "Fixad") return "#22c55e";
-                if (type === "Handjagare krävs") return "#f59e0b";
-                if (type === "Går ej klippa") return "#ef4444";
-                if (type === "Hinder") return "#a855f7";
-                return "#0ea5e9";
-              }
-
-              function openAreaPanel(feature, layer) {
-                closePinPanel();
-                closeMenu();
-
-                const p = feature.properties || {};
-                const id = getFeatureId(p);
-                selectedAreaId = id;
-
-                const saved = statuses[id];
-                areaStatus = saved ? saved.status : "Ej klippt";
-
-                document.getElementById("areaTitle").textContent = label(p.SUBTYP || p.subtyp || p.TYP || "Skötselyta");
-                document.getElementById("mId").textContent = id || "-";
-                document.getElementById("mType").textContent = p.TYP || p.typ || "-";
-                document.getElementById("mSubType").textContent = p.SUBTYP || p.subtyp || "-";
-                document.getElementById("mTeam").textContent = p.TEAM || p.Team || p.team || "-";
-                document.getElementById("mDistrict").textContent = p.DISTRIKT || p.distrikt || "-";
-                document.getElementById("mArea").textContent = formatArea(p.Shape__Area || p.shape__area || p.area);
-
-                document.getElementById("comment").value = saved ? saved.comment : "";
-
-                markAreaStatus();
-                document.getElementById("areaPanel").classList.add("open");
-              }
-
-              function saveAreaStatus() {
-                if (!selectedAreaId) return;
-
-                statuses[selectedAreaId] = {
-                  id:selectedAreaId,
-                  status:areaStatus,
-                  worker:document.getElementById("worker").value,
-                  comment:document.getElementById("comment").value,
-                  savedAt:new Date().toISOString(),
-                  title:document.getElementById("areaTitle").textContent,
-                  type:document.getElementById("mType").textContent,
-                  subtyp:document.getElementById("mSubType").textContent,
-                  team:document.getElementById("mTeam").textContent,
-                  distrikt:document.getElementById("mDistrict").textContent
-                };
-
-                localStorage.setItem(STORE_KEY, JSON.stringify(statuses));
-
-                if (selectedAreaLayer && selectedAreaLayer.feature) {
-                  selectedAreaLayer.setStyle(featureStyle(selectedAreaLayer.feature));
-                }
-
-                updateStats();
-                showToast("Status sparad");
-              }
-
-              function markAreaStatus() {
-                document.querySelectorAll("[data-status]").forEach(b => {
-                  b.classList.toggle("active", b.dataset.status === areaStatus);
-                });
-              }
-
-              function togglePinMode() {
-                setPinMode(!addPinMode);
-              }
-
-              function setPinMode(v) {
-                addPinMode = v;
-                document.getElementById("pinBtn").classList.toggle("danger", addPinMode);
-                document.getElementById("pinHint").classList.toggle("show", addPinMode);
-                document.getElementById("pinBtn").textContent = addPinMode ? "Avbryt" : "Nål";
-              }
-
-              function closePinPanel() {
-                document.getElementById("pinPanel").classList.remove("open");
-                selectedPinId = null;
-                pendingPinLatLng = null;
-              }
-
-              function updatePinCoordsText(latlng) {
-                if (!latlng) return;
-                document.getElementById("pinX").textContent = Number(latlng.lng).toFixed(5);
-                document.getElementById("pinY").textContent = Number(latlng.lat).toFixed(5);
-              }
-
-              function openMenu() {
-                closePinPanel();
-                document.getElementById("areaPanel").classList.remove("open");
-                updateStats();
-                document.getElementById("menuPanel").classList.add("open");
-              }
-
-              function closeMenu() {
-                document.getElementById("menuPanel").classList.remove("open");
-              }
-
-              function fitAllSkotselytor() {
-                closeMenu();
-
-                if (skotselLayer) {
-                  const b = skotselLayer.getBounds();
-                  if (b && b.isValid && b.isValid()) {
-                    map.fitBounds(b, { padding:[25,25], animate:true });
-                  }
-                }
-              }
-
-              function updateStats() {
-                const today = todayKey();
-                const todayPoints = track.filter(p => dayKey(p.time) === today);
-                const km = routeDistance(todayPoints) / 1000;
-                const mins = routeMinutes(todayPoints);
-
-                document.getElementById("todayKm").textContent = km.toFixed(2).replace(".", ",") + " km";
-                document.getElementById("pointCount").textContent = String(track.length);
-
-                document.getElementById("menuTodayKm").textContent = km.toFixed(2).replace(".", ",") + " km";
-                document.getElementById("menuTodayTime").textContent = mins + " min";
-                document.getElementById("menuPins").textContent = String(pins.length);
-                document.getElementById("menuStatuses").textContent = String(Object.keys(statuses).length);
-
-                renderDayList();
-              }
-
-              function renderDayList() {
-                const box = document.getElementById("dayList");
-                if (!box) return;
-
-                const days = {};
-
-                track.forEach(p => {
-                  const k = dayKey(p.time);
-                  if (!days[k]) days[k] = [];
-                  days[k].push(p);
-                });
-
-                const keys = Object.keys(days).sort().reverse();
-                box.innerHTML = "";
-
-                if (!keys.length) {
-                  box.innerHTML = '<div class="listItem"><b>Ingen rutt ännu</b><span>Starta spårning för att samla statistik.</span></div>';
-                  return;
-                }
-
-                keys.slice(0,14).forEach(k => {
-                  const pts = days[k];
-                  const km = routeDistance(pts) / 1000;
-                  const mins = routeMinutes(pts);
-
-                  const div = document.createElement("div");
-                  div.className = "listItem";
-                  div.innerHTML =
-                    "<b>" + k + "</b>" +
-                    "<span>" + km.toFixed(2).replace(".", ",") + " km • " + mins + " min • " + pts.length + " punkter</span>";
-                  box.appendChild(div);
-                });
-              }
-
-              function shareReport() {
-                const today = todayKey();
-                const todayPoints = track.filter(p => dayKey(p.time) === today);
-                const km = routeDistance(todayPoints) / 1000;
-                const mins = routeMinutes(todayPoints);
-                const todayStatuses = Object.values(statuses).filter(s => dayKey(s.savedAt) === today);
-                const openPins = pins.filter(p => p.status !== "Fixad");
-                const fixedPins = pins.filter(p => p.status === "Fixad");
-
-                let text = "";
-                text += "Skötselytor GPS - dagsrapport\n";
-                text += "Datum: " + today + "\n\n";
-                text += "Rutt: " + km.toFixed(2).replace(".", ",") + " km\n";
-                text += "Spårad tid: " + mins + " min\n";
-                text += "GPS-punkter: " + todayPoints.length + "\n\n";
-                text += "Nålar totalt: " + pins.length + "\n";
-                text += "Öppna nålar: " + openPins.length + "\n";
-                text += "Fixade nålar: " + fixedPins.length + "\n\n";
-                text += "Statusar sparade idag: " + todayStatuses.length + "\n";
-
-                if (todayStatuses.length) {
-                  text += "\nYtor idag:\n";
-                  todayStatuses.forEach(s => {
-                    text += "- " + (s.subtyp || s.title || "Yta") + " / " + s.status + " / " + (s.comment || "ingen kommentar") + "\n";
-                  });
-                }
-
-                if (pins.length) {
-                  text += "\nNålar:\n";
-                  pins.forEach(p => {
-                    text += "- " + p.type + " / " + p.status + " / " + (p.comment || "ingen kommentar") + "\n";
-                  });
-                }
-
-                try {
-                  if (window.AndroidBridge && window.AndroidBridge.shareText) {
-                    window.AndroidBridge.shareText("Skötselytor GPS rapport " + today, text);
-                  } else {
-                    alert(text);
-                  }
-                } catch(e) {
-                  alert(text);
-                }
-              }
-
-              function clearTodayRoute() {
-                const today = todayKey();
-                if (!confirm("Rensa dagens rutt? Nålar och statusar sparas.")) return;
-
-                track = track.filter(p => dayKey(p.time) !== today);
-                localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-                redrawTrack();
-                updateStats();
-                showToast("Dagens rutt rensad");
-              }
-
-              function clearAllRoutes() {
-                if (!confirm("Rensa alla rutter? Nålar och statusar sparas.")) return;
-
-                track = [];
-                localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-
-                try {
-                  if (window.AndroidBridge && window.AndroidBridge.clearNativeTrack) {
-                    window.AndroidBridge.clearNativeTrack();
-                  }
-                } catch(e) {}
-
-                routeLayer.clearLayers();
-                routeLine = null;
-                updateStats();
-                showToast("Alla rutter rensade");
-              }
-
-              function routeDistance(points) {
-                let total = 0;
-
-                for (let i = 1; i < points.length; i++) {
-                  total += distance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon);
-                }
-
-                return total;
-              }
-
-              function routeMinutes(points) {
-                if (points.length < 2) return 0;
-
-                const a = new Date(points[0].time).getTime();
-                const b = new Date(points[points.length - 1].time).getTime();
-
-                return Math.max(0, Math.round((b - a) / 60000));
-              }
-
-              function dayKey(t) {
-                const d = new Date(t);
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2,"0");
-                const day = String(d.getDate()).padStart(2,"0");
-                return y + "-" + m + "-" + day;
-              }
-
-              function todayKey() {
-                return dayKey(new Date().toISOString());
-              }
-
-              function distance(lat1, lon1, lat2, lon2) {
-                const R = 6371000;
-                const r = d => d * Math.PI / 180;
-                const dLat = r(lat2 - lat1);
-                const dLon = r(lon2 - lon1);
-
-                const a =
-                  Math.sin(dLat / 2) ** 2 +
-                  Math.cos(r(lat1)) * Math.cos(r(lat2)) *
-                  Math.sin(dLon / 2) ** 2;
-
-                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-              }
-
-              function bearing(lat1, lon1, lat2, lon2) {
-                const r = d => d * Math.PI / 180;
-                const y = Math.sin(r(lon2 - lon1)) * Math.cos(r(lat2));
-                const x =
-                  Math.cos(r(lat1)) * Math.sin(r(lat2)) -
-                  Math.sin(r(lat1)) * Math.cos(r(lat2)) * Math.cos(r(lon2 - lon1));
-
-                return normalizeAngle((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
-              }
-
-              function lerpAngle(a, b, t) {
-                let diff = ((b - a + 540) % 360) - 180;
-                return normalizeAngle(a + diff * t);
-              }
-
-              function normalizeAngle(a) {
-                return ((a % 360) + 360) % 360;
-              }
-
-              function getFeatureId(p) {
-                return String(
-                  p.OBJECTID ||
-                  p.objectid ||
-                  p.OBJECTID_1 ||
-                  p.GlobalID ||
-                  p.globalid ||
-                  p.id ||
-                  "yta_" + Math.random()
-                );
-              }
-
-              function formatArea(v) {
-                const n = Number(v);
-
-                if (!Number.isFinite(n)) return "-";
-
-                if (n > 10000) {
-                  return (n / 10000).toFixed(2).replace(".", ",") + " ha";
-                }
-
-                return Math.round(n).toLocaleString("sv-SE") + " m²";
-              }
-
-              function label(v) {
-                const raw = String(v || "").trim();
-                const key = raw.toLowerCase();
-
-                const m = {
-                  bruksgrasmatta:"Bruksgräsmatta",
-                  hogvuxen_grasyta_ang:"Högvuxen gräsyta/Äng",
-                  bruksgrasmatta_robot:"Bruksgräsmatta med robot",
-                  plantering:"Plantering",
-                  naturmark:"Naturmark",
-                  grasarmering:"Gräsarmering"
-                };
-
-                return m[key] || raw || "Skötselyta";
-              }
-
-              let toastTimer;
-
-              function showToast(t) {
-                const el = document.getElementById("toast");
-                el.textContent = t;
-                el.classList.add("show");
-                clearTimeout(toastTimer);
-                toastTimer = setTimeout(() => el.classList.remove("show"), 1600);
-              }
-            </script>
-          </body>
-          </html>
           EOF
 
       - name: Build APK
@@ -2089,5 +864,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-gps-apk
+          name: skotselytor-gps-clean-apk
           path: app/build/outputs/apk/debug/app-debug.apk
