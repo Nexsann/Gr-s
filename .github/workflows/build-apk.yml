@@ -71,8 +71,8 @@ jobs:
                   applicationId "se.skotselytor.gps"
                   minSdk 26
                   targetSdk 35
-                  versionCode 15
-                  versionName "2.4"
+                  versionCode 16
+                  versionName "2.5"
               }
           }
           EOF
@@ -350,6 +350,8 @@ jobs:
           import android.os.Bundle;
           import android.view.View;
           import android.view.Window;
+          import android.view.WindowInsets;
+          import android.view.WindowInsetsController;
           import android.view.WindowManager;
           import android.webkit.GeolocationPermissions;
           import android.webkit.JavascriptInterface;
@@ -388,6 +390,7 @@ jobs:
                   s.setAllowFileAccess(true);
                   s.setAllowContentAccess(true);
                   s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                  s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
                   webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
 
@@ -443,6 +446,14 @@ jobs:
               }
 
               private void hideSystemBars() {
+                  if (Build.VERSION.SDK_INT >= 30) {
+                      WindowInsetsController c = getWindow().getInsetsController();
+                      if (c != null) {
+                          c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                          c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                      }
+                  }
+
                   getWindow().getDecorView().setSystemUiVisibility(
                       View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                           | View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -584,10 +595,7 @@ jobs:
                 background:#020617;
               }
 
-              * {
-                box-sizing:border-box;
-                -webkit-tap-highlight-color:transparent;
-              }
+              * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 
               .topbar {
                 position:fixed;
@@ -598,68 +606,25 @@ jobs:
                 display:flex;
                 gap:7px;
                 align-items:center;
-                padding:10px;
+                padding:calc(10px + env(safe-area-inset-top)) 10px 10px 10px;
                 background:linear-gradient(135deg,#052e5c,#064e3b);
                 color:white;
                 box-shadow:0 10px 28px rgba(0,0,0,.35);
               }
 
-              .title {
-                flex:1;
-                min-width:0;
-                line-height:1.05;
-              }
+              .title { flex:1; min-width:0; line-height:1.05; }
+              .title b { display:block; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+              .title span { display:block; font-size:11px; opacity:.85; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-              .title b {
-                display:block;
-                font-size:15px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .title span {
-                display:block;
-                font-size:11px;
-                opacity:.85;
-                margin-top:2px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              button {
-                border:0;
-                border-radius:999px;
-                padding:10px 11px;
-                font-weight:850;
-                font-size:12px;
-                cursor:pointer;
-              }
-
-              .btn {
-                background:rgba(255,255,255,.16);
-                color:white;
-              }
-
-              .primary {
-                background:#22c55e;
-                color:#052e16;
-              }
-
-              .warn {
-                background:#f59e0b !important;
-                color:#451a03 !important;
-              }
-
-              .danger {
-                background:#ef4444 !important;
-                color:white !important;
-              }
+              button { border:0; border-radius:999px; padding:10px 11px; font-weight:850; font-size:12px; cursor:pointer; }
+              .btn { background:rgba(255,255,255,.16); color:white; }
+              .primary { background:#22c55e; color:#052e16; }
+              .warn { background:#f59e0b !important; color:#451a03 !important; }
+              .danger { background:#ef4444 !important; color:white !important; }
 
               .stats {
                 position:fixed;
-                top:72px;
+                top:calc(72px + env(safe-area-inset-top));
                 left:8px;
                 right:8px;
                 z-index:40;
@@ -669,251 +634,53 @@ jobs:
                 pointer-events:none;
               }
 
-              .stat {
-                background:rgba(255,255,255,.94);
-                color:#0f172a;
-                border-radius:16px;
-                padding:9px 10px;
-                box-shadow:0 8px 22px rgba(0,0,0,.18);
-                min-width:0;
-              }
-
-              .stat b {
-                display:block;
-                font-size:10px;
-                color:#64748b;
-                text-transform:uppercase;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .stat span {
-                display:block;
-                font-size:14px;
-                font-weight:900;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
+              .stat { background:rgba(255,255,255,.94); color:#0f172a; border-radius:16px; padding:9px 10px; box-shadow:0 8px 22px rgba(0,0,0,.18); min-width:0; }
+              .stat b { display:block; font-size:10px; color:#64748b; text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+              .stat span { display:block; font-size:14px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
               .bottomBar {
                 position:fixed;
                 z-index:45;
                 left:8px;
                 right:8px;
-                bottom:8px;
+                bottom:calc(8px + env(safe-area-inset-bottom));
                 display:grid;
                 grid-template-columns:1fr 1fr 1fr;
                 gap:7px;
                 pointer-events:none;
               }
 
-              .bottomBar button {
-                pointer-events:auto;
-                border-radius:16px;
-                padding:12px 9px;
-                background:#0f172a;
-                color:white;
-                box-shadow:0 10px 28px rgba(0,0,0,.25);
-              }
+              .bottomBar button { pointer-events:auto; border-radius:16px; padding:12px 9px; background:#0f172a; color:white; box-shadow:0 10px 28px rgba(0,0,0,.25); }
 
-              .panel {
-                position:fixed;
-                left:8px;
-                right:8px;
-                bottom:8px;
-                z-index:80;
-                background:white;
-                border-radius:20px;
-                box-shadow:0 18px 44px rgba(0,0,0,.35);
-                display:none;
-                overflow:hidden;
-                max-height:72vh;
-              }
+              .panel { position:fixed; left:8px; right:8px; bottom:calc(8px + env(safe-area-inset-bottom)); z-index:80; background:white; border-radius:20px; box-shadow:0 18px 44px rgba(0,0,0,.35); display:none; overflow:hidden; max-height:72vh; }
+              .panel.open { display:block; }
+              .panelHead { padding:14px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+              .panelHead h2 { margin:0; font-size:18px; }
+              .panelHead small { display:block; color:#64748b; margin-top:3px; }
+              .panelBody { padding:14px; overflow:auto; max-height:calc(72vh - 64px); }
 
-              .panel.open {
-                display:block;
-              }
+              .meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+              .meta div { background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px; padding:8px; min-width:0; }
+              .meta b { display:block; font-size:10px; color:#64748b; text-transform:uppercase; }
+              .meta span { display:block; font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-              .panelHead {
-                padding:14px;
-                border-bottom:1px solid #e2e8f0;
-                display:flex;
-                justify-content:space-between;
-                gap:10px;
-                align-items:flex-start;
-              }
+              input, textarea, select { width:100%; border:1px solid #cbd5e1; border-radius:14px; padding:12px; margin-top:8px; font:inherit; background:white; }
+              .statuses { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+              .statuses button { border-radius:14px; background:#e2e8f0; color:#0f172a; }
+              .statuses button.active { outline:3px solid #0f172a; }
+              .save { width:100%; margin-top:10px; background:#082e5c; color:white; border-radius:14px; }
+              .delete { width:100%; margin-top:8px; background:#fee2e2; color:#7f1d1d; border-radius:14px; }
+              .mini { background:#e2e8f0; color:#0f172a; border-radius:14px; width:100%; margin-top:8px; }
+              .hidden { display:none !important; }
 
-              .panelHead h2 {
-                margin:0;
-                font-size:18px;
-              }
-
-              .panelHead small {
-                display:block;
-                color:#64748b;
-                margin-top:3px;
-              }
-
-              .panelBody {
-                padding:14px;
-                overflow:auto;
-                max-height:calc(72vh - 64px);
-              }
-
-              .meta {
-                display:grid;
-                grid-template-columns:1fr 1fr;
-                gap:8px;
-                margin-bottom:10px;
-              }
-
-              .meta div {
-                background:#f8fafc;
-                border:1px solid #e2e8f0;
-                border-radius:14px;
-                padding:8px;
-                min-width:0;
-              }
-
-              .meta b {
-                display:block;
-                font-size:10px;
-                color:#64748b;
-                text-transform:uppercase;
-              }
-
-              .meta span {
-                display:block;
-                font-size:13px;
-                font-weight:800;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              input, textarea, select {
-                width:100%;
-                border:1px solid #cbd5e1;
-                border-radius:14px;
-                padding:12px;
-                margin-top:8px;
-                font:inherit;
-                background:white;
-              }
-
-              .statuses {
-                display:grid;
-                grid-template-columns:1fr 1fr;
-                gap:8px;
-                margin-top:10px;
-              }
-
-              .statuses button {
-                border-radius:14px;
-                background:#e2e8f0;
-                color:#0f172a;
-              }
-
-              .statuses button.active {
-                outline:3px solid #0f172a;
-              }
-
-              .save {
-                width:100%;
-                margin-top:10px;
-                background:#082e5c;
-                color:white;
-                border-radius:14px;
-              }
-
-              .delete {
-                width:100%;
-                margin-top:8px;
-                background:#fee2e2;
-                color:#7f1d1d;
-                border-radius:14px;
-              }
-
-              .mini {
-                background:#e2e8f0;
-                color:#0f172a;
-                border-radius:14px;
-                width:100%;
-                margin-top:8px;
-              }
-
-              .hidden {
-                display:none !important;
-              }
-
-              .toast {
-                position:fixed;
-                left:50%;
-                bottom:72px;
-                transform:translateX(-50%);
-                z-index:120;
-                background:#020617;
-                color:white;
-                border-radius:999px;
-                padding:11px 16px;
-                font-weight:900;
-                opacity:0;
-                transition:.2s;
-                white-space:nowrap;
-                box-shadow:0 12px 28px rgba(0,0,0,.3);
-              }
-
-              .toast.show {
-                opacity:1;
-              }
-
-              .hint {
-                position:fixed;
-                left:50%;
-                top:128px;
-                transform:translateX(-50%);
-                z-index:90;
-                background:#ef4444;
-                color:white;
-                border-radius:999px;
-                padding:10px 14px;
-                font-size:13px;
-                font-weight:900;
-                box-shadow:0 10px 25px rgba(0,0,0,.25);
-                display:none;
-                white-space:nowrap;
-              }
-
-              .hint.show {
-                display:block;
-              }
-
-              .list {
-                display:grid;
-                gap:8px;
-                margin-top:10px;
-              }
-
-              .listItem {
-                background:#f8fafc;
-                border:1px solid #e2e8f0;
-                border-radius:14px;
-                padding:10px;
-              }
-
-              .listItem b {
-                display:block;
-                font-size:13px;
-              }
-
-              .listItem span {
-                display:block;
-                font-size:12px;
-                color:#64748b;
-                margin-top:3px;
-              }
+              .toast { position:fixed; left:50%; bottom:calc(72px + env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:120; background:#020617; color:white; border-radius:999px; padding:11px 16px; font-weight:900; opacity:0; transition:.2s; white-space:nowrap; box-shadow:0 12px 28px rgba(0,0,0,.3); }
+              .toast.show { opacity:1; }
+              .hint { position:fixed; left:50%; top:calc(128px + env(safe-area-inset-top)); transform:translateX(-50%); z-index:90; background:#ef4444; color:white; border-radius:999px; padding:10px 14px; font-size:13px; font-weight:900; box-shadow:0 10px 25px rgba(0,0,0,.25); display:none; white-space:nowrap; }
+              .hint.show { display:block; }
+              .list { display:grid; gap:8px; margin-top:10px; }
+              .listItem { background:#f8fafc; border:1px solid #e2e8f0; border-radius:14px; padding:10px; }
+              .listItem b { display:block; font-size:13px; }
+              .listItem span { display:block; font-size:12px; color:#64748b; margin-top:3px; }
             </style>
           </head>
 
@@ -923,11 +690,11 @@ jobs:
             <div class="topbar">
               <div class="title">
                 <b>Skötselytor GPS</b>
-                <span>Silky GPS • långtryck = nål • bakgrundsspårning</span>
+                <span>Google Maps-läge • långtryck = nål • bakgrundsspårning</span>
               </div>
               <button class="btn" id="pinBtn">Nål</button>
               <button class="btn" id="trackBtn">Spåra</button>
-              <button class="primary" id="gpsBtn">GPS</button>
+              <button class="primary" id="gpsBtn">Centrera</button>
             </div>
 
             <div class="stats">
@@ -1053,12 +820,13 @@ jobs:
                 const WEBMAP_ID = "4811ba982b9e4a97b01cf4353224374b";
                 const LAYER_URL = "https://kartor.linkoping.se/arcgis/rest/services/sts_omradeskarta/sts_skotselkartan_l/MapServer/32";
 
-                const STORE_KEY = "skotselytor_status_v24";
-                const TRACK_KEY = "skotselytor_track_v24";
-                const PINS_KEY = "skotselytor_pins_v24";
+                const STORE_KEY = "skotselytor_status_v25";
+                const TRACK_KEY = "skotselytor_track_v25";
+                const OLD_TRACK_KEY = "skotselytor_track_v24";
+                const PINS_KEY = "skotselytor_pins_v25";
+                const OLD_PINS_KEY = "skotselytor_pins_v24";
 
                 const MAX_ACCURACY = 80;
-                const GOOD_ACCURACY = 35;
                 const MIN_DISTANCE = 2.5;
                 const MAX_JUMP = 120;
 
@@ -1068,12 +836,21 @@ jobs:
                 let areaStatus = "Ej klippt";
                 let watchId = null;
                 let tracking = false;
-                let followGps = false;
+                let followMode = "none"; // none, center, heading
                 let addPinMode = false;
                 let lastGpsPoint = null;
-                let lastHeading = null;
-                let lineGraphic = null;
+                let lastGpsBearing = null;
+                let deviceHeading = null;
+                let routeGraphic = null;
+                let gpsMarkerGraphic = null;
+                let accuracyGraphic = null;
                 let viewReady = false;
+                let cameraTimer = 0;
+                let statsTimer = 0;
+                let routeDirty = false;
+                let holdTimer = null;
+                let holdStart = null;
+                let holdMoved = false;
 
                 let smooth = {
                   currentLon:null,
@@ -1085,14 +862,18 @@ jobs:
                   animating:false
                 };
 
-                const statuses = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-                let track = JSON.parse(localStorage.getItem(TRACK_KEY) || "[]");
-                let pins = JSON.parse(localStorage.getItem(PINS_KEY) || "[]");
+                const statuses = JSON.parse(localStorage.getItem(STORE_KEY) || localStorage.getItem("skotselytor_status_v24") || "{}");
+                let track = JSON.parse(localStorage.getItem(TRACK_KEY) || localStorage.getItem(OLD_TRACK_KEY) || "[]");
+                let pins = JSON.parse(localStorage.getItem(PINS_KEY) || localStorage.getItem(OLD_PINS_KEY) || "[]");
 
-                const statusLayer = new GraphicsLayer({ title:"Status" });
-                const routeLayer = new GraphicsLayer({ title:"Rutt" });
-                const pinLayer = new GraphicsLayer({ title:"Nålar" });
-                const gpsLayer = new GraphicsLayer({ title:"GPS" });
+                localStorage.setItem(STORE_KEY, JSON.stringify(statuses));
+                localStorage.setItem(TRACK_KEY, JSON.stringify(track));
+                localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+
+                const statusLayer = new GraphicsLayer({ title:"Status", listMode:"hide" });
+                const routeLayer = new GraphicsLayer({ title:"Rutt", listMode:"hide" });
+                const pinLayer = new GraphicsLayer({ title:"Nålar", listMode:"hide" });
+                const gpsLayer = new GraphicsLayer({ title:"GPS", listMode:"hide" });
 
                 const webmap = new WebMap({
                   portalItem: {
@@ -1129,13 +910,16 @@ jobs:
 
                 view.when(() => {
                   viewReady = true;
-                  redrawTrack();
+                  redrawTrack(true);
                   redrawPins();
                   updateStats();
+                  bindMapInteractionHandlers();
+                  bindLongPressPins();
+                  startCompass();
                   showToast("Kartan är redo");
                 });
 
-                document.getElementById("gpsBtn").onclick = centerOnGpsOrStart;
+                document.getElementById("gpsBtn").onclick = gpsButtonClick;
                 document.getElementById("trackBtn").onclick = toggleTrack;
                 document.getElementById("pinBtn").onclick = togglePinMode;
                 document.getElementById("pinGpsBtn").onclick = createPinAtGps;
@@ -1159,13 +943,6 @@ jobs:
                 });
 
                 document.getElementById("saveAreaBtn").onclick = saveAreaStatus;
-
-                view.on("hold", e => {
-                  if (e && e.mapPoint) {
-                    createPinAtPoint(e.mapPoint, "Nål skapad");
-                    setPinMode(false);
-                  }
-                });
 
                 view.on("click", async e => {
                   if (addPinMode) {
@@ -1204,6 +981,7 @@ jobs:
                     if (!Array.isArray(nativeTrack) || nativeTrack.length === 0) return;
 
                     const existing = new Set(track.map(p => String(p.time) + "_" + p.lat + "_" + p.lon));
+                    let added = 0;
 
                     nativeTrack.forEach(p => {
                       const normalized = {
@@ -1221,20 +999,87 @@ jobs:
                       if (Number.isFinite(normalized.lat) && Number.isFinite(normalized.lon) && !existing.has(key)) {
                         track.push(normalized);
                         existing.add(key);
+                        added++;
                       }
                     });
+
+                    if (!added) return;
 
                     track.sort((a,b) => new Date(a.time).getTime() - new Date(b.time).getTime());
                     localStorage.setItem(TRACK_KEY, JSON.stringify(track));
 
                     if (viewReady) {
-                      redrawTrack();
+                      redrawTrack(true);
                       updateStats();
                     }
                   } catch(e) {
                     console.log("mergeNativeTrack error", e);
                   }
                 };
+
+                function bindMapInteractionHandlers() {
+                  view.on("drag", e => {
+                    if (e.action === "start" && !holdTimer) userMovedMap();
+                  });
+                  view.on("mouse-wheel", userMovedMap);
+                  view.on("double-click", userMovedMap);
+                }
+
+                function userMovedMap() {
+                  if (followMode !== "none") {
+                    setFollowMode("none", false);
+                    showToast("Fri karta");
+                  }
+                }
+
+                function bindLongPressPins() {
+                  view.on("pointer-down", e => {
+                    if (e.button !== 0) return;
+                    holdMoved = false;
+                    holdStart = { x:e.x, y:e.y };
+                    clearTimeout(holdTimer);
+                    holdTimer = setTimeout(() => {
+                      holdTimer = null;
+                      if (holdMoved || !holdStart) return;
+                      const mp = view.toMap({ x:holdStart.x, y:holdStart.y });
+                      if (mp) {
+                        createPinAtPoint(mp, "Nål skapad");
+                        setPinMode(false);
+                      }
+                    }, 650);
+                  });
+
+                  view.on("pointer-move", e => {
+                    if (!holdStart) return;
+                    const dx = Math.abs(e.x - holdStart.x);
+                    const dy = Math.abs(e.y - holdStart.y);
+                    if (dx > 10 || dy > 10) {
+                      holdMoved = true;
+                      clearTimeout(holdTimer);
+                      holdTimer = null;
+                    }
+                  });
+
+                  view.on("pointer-up", () => {
+                    clearTimeout(holdTimer);
+                    holdTimer = null;
+                    holdStart = null;
+                  });
+                }
+
+                function startCompass() {
+                  const handler = e => {
+                    let h = null;
+                    if (typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;
+                    else if (typeof e.alpha === "number") h = normalizeAngle(360 - e.alpha);
+                    if (Number.isFinite(h)) deviceHeading = h;
+                  };
+
+                  try {
+                    window.addEventListener("deviceorientationabsolute", handler, true);
+                    window.addEventListener("deviceorientation", handler, true);
+                  } catch(e) {}
+                }
 
                 function toggleTrack() {
                   tracking ? stopTrack() : startTrack();
@@ -1247,7 +1092,7 @@ jobs:
                   }
 
                   tracking = true;
-                  followGps = true;
+                  setFollowMode("center", false);
 
                   document.getElementById("trackBtn").classList.add("warn");
                   document.getElementById("trackBtn").textContent = "Stoppa";
@@ -1263,7 +1108,7 @@ jobs:
                       showToast("GPS-fel: " + err.message);
                     }, {
                       enableHighAccuracy:true,
-                      maximumAge:0,
+                      maximumAge:1000,
                       timeout:10000
                     });
                   }
@@ -1273,7 +1118,7 @@ jobs:
 
                 function stopTrack() {
                   tracking = false;
-                  followGps = false;
+                  setFollowMode("none", false);
 
                   if (watchId !== null) {
                     navigator.geolocation.clearWatch(watchId);
@@ -1314,7 +1159,11 @@ jobs:
 
                   if (last) {
                     const d = distance(last.lat,last.lon,p.lat,p.lon);
-                    if (d < MIN_DISTANCE) return;
+                    if (d < MIN_DISTANCE) {
+                      lastGpsPoint = p;
+                      setSmoothTarget(p, false);
+                      return;
+                    }
                     if (d > MAX_JUMP && p.accuracy > 25) {
                       showToast("GPS-hopp ignorerat");
                       return;
@@ -1327,21 +1176,21 @@ jobs:
                     if (d >= 1.5) p.heading = bearing(prev.lat, prev.lon, p.lat, p.lon);
                   }
 
-                  if (Number.isFinite(p.heading)) lastHeading = p.heading;
+                  if (Number.isFinite(p.heading)) lastGpsBearing = p.heading;
 
                   lastGpsPoint = p;
                   track.push(p);
                   localStorage.setItem(TRACK_KEY, JSON.stringify(track));
 
-                  setSmoothTarget(p);
-                  redrawTrack();
-                  updateStats();
+                  setSmoothTarget(p, true);
+                  scheduleRouteRedraw();
+                  scheduleStatsUpdate();
                 }
 
                 function setSmoothTarget(p) {
                   smooth.targetLon = p.lon;
                   smooth.targetLat = p.lat;
-                  smooth.targetHeading = Number.isFinite(p.heading) ? p.heading : (lastHeading || smooth.currentHeading || 0);
+                  smooth.targetHeading = getBestHeading(p);
 
                   if (smooth.currentLon === null || smooth.currentLat === null) {
                     smooth.currentLon = p.lon;
@@ -1355,17 +1204,25 @@ jobs:
                   }
                 }
 
+                function getBestHeading(p) {
+                  if (Number.isFinite(deviceHeading)) return deviceHeading;
+                  if (p && Number.isFinite(p.heading)) return p.heading;
+                  if (Number.isFinite(lastGpsBearing)) return lastGpsBearing;
+                  return smooth.currentHeading || 0;
+                }
+
                 function smoothFrame() {
                   if (smooth.targetLon === null || smooth.targetLat === null) {
                     smooth.animating = false;
                     return;
                   }
 
-                  const k = 0.10;
+                  smooth.targetHeading = getBestHeading(lastGpsPoint);
 
+                  const k = 0.12;
                   smooth.currentLon += (smooth.targetLon - smooth.currentLon) * k;
                   smooth.currentLat += (smooth.targetLat - smooth.currentLat) * k;
-                  smooth.currentHeading = lerpAngle(smooth.currentHeading, smooth.targetHeading, 0.08);
+                  smooth.currentHeading = lerpAngle(smooth.currentHeading, smooth.targetHeading, 0.10);
 
                   drawSmoothGps();
 
@@ -1379,7 +1236,7 @@ jobs:
                 }
 
                 function drawSmoothGps() {
-                  gpsLayer.removeAll();
+                  if (!Number.isFinite(smooth.currentLon) || !Number.isFinite(smooth.currentLat)) return;
 
                   const point = new Point({
                     longitude:smooth.currentLon,
@@ -1388,70 +1245,122 @@ jobs:
                   });
 
                   try {
-                    gpsLayer.add(new Graphic({
-                      geometry:geometryEngine.geodesicBuffer(point, Math.max(lastGpsPoint?.accuracy || 8, 5), "meters"),
-                      symbol:{
-                        type:"simple-fill",
-                        color:[56,189,248,.05],
-                        outline:{ color:[56,189,248,.2], width:1 }
-                      }
-                    }));
+                    const buffer = geometryEngine.geodesicBuffer(point, Math.max(lastGpsPoint?.accuracy || 8, 5), "meters");
+                    if (!accuracyGraphic) {
+                      accuracyGraphic = new Graphic({
+                        geometry:buffer,
+                        symbol:{ type:"simple-fill", color:[56,189,248,.05], outline:{ color:[56,189,248,.2], width:1 } }
+                      });
+                      gpsLayer.add(accuracyGraphic);
+                    } else {
+                      accuracyGraphic.geometry = buffer;
+                    }
                   } catch(e) {}
 
-                  gpsLayer.add(new Graphic({
-                    geometry:point,
-                    attributes:{ __type:"gps" },
-                    symbol:{
-                      type:"simple-marker",
-                      style:"triangle",
-                      color:[56,189,248,1],
-                      size:20,
-                      angle:smooth.currentHeading,
-                      outline:{ color:[255,255,255,1], width:3 }
-                    }
-                  }));
+                  const markerSymbol = {
+                    type:"simple-marker",
+                    style:"triangle",
+                    color:[56,189,248,1],
+                    size:20,
+                    angle:smooth.currentHeading,
+                    outline:{ color:[255,255,255,1], width:3 }
+                  };
 
-                  if (followGps && viewReady) {
-                    try {
-                      view.center = point;
-                      view.rotation = normalizeAngle(360 - smooth.currentHeading);
-                    } catch(e) {}
-                  }
-                }
-
-                function centerOnGpsOrStart() {
-                  followGps = true;
-                  if (!tracking) startTrack();
-
-                  if (lastGpsPoint) {
-                    setSmoothTarget(lastGpsPoint);
-                    showToast("Följer GPS");
+                  if (!gpsMarkerGraphic) {
+                    gpsMarkerGraphic = new Graphic({
+                      geometry:point,
+                      attributes:{ __type:"gps" },
+                      symbol:markerSymbol
+                    });
+                    gpsLayer.add(gpsMarkerGraphic);
                   } else {
-                    showToast("Startar GPS… vänta på position");
+                    gpsMarkerGraphic.geometry = point;
+                    gpsMarkerGraphic.symbol = markerSymbol;
+                  }
+
+                  maybeUpdateCamera(point);
+                }
+
+                function maybeUpdateCamera(point) {
+                  if (!viewReady || followMode === "none" || view.interacting || view.updating) return;
+
+                  const now = Date.now();
+                  if (now - cameraTimer < 450) return;
+                  cameraTimer = now;
+
+                  const target = { center:point };
+                  if (followMode === "heading") target.rotation = normalizeAngle(360 - smooth.currentHeading);
+
+                  view.goTo(target, { duration:220, easing:"linear" }).catch(() => {});
+                }
+
+                function gpsButtonClick() {
+                  if (!tracking) {
+                    startTrack();
+                    setFollowMode("center", true);
+                    return;
+                  }
+
+                  if (followMode === "none") setFollowMode("center", true);
+                  else if (followMode === "center") setFollowMode("heading", true);
+                  else setFollowMode("center", true);
+                }
+
+                function setFollowMode(mode, jumpNow) {
+                  followMode = mode;
+                  const btn = document.getElementById("gpsBtn");
+
+                  if (mode === "none") {
+                    btn.textContent = "Centrera";
+                    btn.classList.remove("warn");
+                  } else if (mode === "center") {
+                    btn.textContent = "Följer";
+                    btn.classList.remove("warn");
+                  } else {
+                    btn.textContent = "Kompass";
+                    btn.classList.add("warn");
+                  }
+
+                  if (jumpNow && lastGpsPoint && viewReady) {
+                    const point = new Point({ longitude:lastGpsPoint.lon, latitude:lastGpsPoint.lat, spatialReference:{ wkid:4326 } });
+                    const target = { center:point, zoom:Math.max(view.zoom || 16, 17) };
+                    if (mode === "heading") target.rotation = normalizeAngle(360 - getBestHeading(lastGpsPoint));
+                    view.goTo(target, { duration:450 }).catch(() => {});
+                    showToast(mode === "heading" ? "Följer kompass" : "Centrerad på GPS");
                   }
                 }
 
-                function redrawTrack() {
-                  routeLayer.removeAll();
-                  lineGraphic = null;
+                function scheduleRouteRedraw() {
+                  if (routeDirty) return;
+                  routeDirty = true;
+                  setTimeout(() => {
+                    routeDirty = false;
+                    redrawTrack(false);
+                  }, 400);
+                }
 
-                  if (track.length < 2) return;
+                function redrawTrack(force) {
+                  if (track.length < 2) {
+                    routeLayer.removeAll();
+                    routeGraphic = null;
+                    return;
+                  }
 
-                  lineGraphic = new Graphic({
-                    geometry:new Polyline({
-                      paths:[track.map(p => [p.lon,p.lat])],
-                      spatialReference:{ wkid:4326 }
-                    }),
-                    symbol:{
-                      type:"simple-line",
-                      color:[14,165,233,.95],
-                      width:5,
-                      cap:"round",
-                      join:"round"
-                    }
+                  const geometry = new Polyline({
+                    paths:[track.map(p => [p.lon,p.lat])],
+                    spatialReference:{ wkid:4326 }
                   });
 
-                  routeLayer.add(lineGraphic);
+                  if (!routeGraphic || force) {
+                    routeLayer.removeAll();
+                    routeGraphic = new Graphic({
+                      geometry,
+                      symbol:{ type:"simple-line", color:[14,165,233,.95], width:5, cap:"round", join:"round" }
+                    });
+                    routeLayer.add(routeGraphic);
+                  } else {
+                    routeGraphic.geometry = geometry;
+                  }
                 }
 
                 function createPinAtPoint(point, msg) {
@@ -1460,10 +1369,40 @@ jobs:
                     return;
                   }
 
+                  const geom = point.clone ? point.clone().toJSON() : point.toJSON();
                   selectedPinId = null;
-                  pendingPinGeometry = point.clone ? point.clone().toJSON() : point.toJSON();
-                  openPinPanelForNew(pendingPinGeometry);
+                  pendingPinGeometry = normalizePointGeometry(geom);
+
+                  const autoPin = {
+                    id:"pin_" + Date.now(),
+                    geometry:pendingPinGeometry,
+                    type:"Handjagare krävs",
+                    comment:"",
+                    status:"Öppen",
+                    createdAt:new Date().toISOString(),
+                    updatedAt:new Date().toISOString()
+                  };
+
+                  pins.push(autoPin);
+                  selectedPinId = autoPin.id;
+                  localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+                  redrawPins();
+                  updateStats();
+                  openPinPanelForExisting(autoPin.id);
                   showToast(msg || "Nål skapad");
+                }
+
+                function normalizePointGeometry(geom) {
+                  const lon = geom.longitude ?? geom.x;
+                  const lat = geom.latitude ?? geom.y;
+                  return {
+                    type:"point",
+                    longitude:lon,
+                    latitude:lat,
+                    x:lon,
+                    y:lat,
+                    spatialReference:{ wkid:4326 }
+                  };
                 }
 
                 function createPinAtGps() {
@@ -1472,15 +1411,8 @@ jobs:
                     return;
                   }
 
-                  selectedPinId = null;
-                  pendingPinGeometry = {
-                    type:"point",
-                    longitude:lastGpsPoint.lon,
-                    latitude:lastGpsPoint.lat,
-                    spatialReference:{ wkid:4326 }
-                  };
-
-                  openPinPanelForNew(pendingPinGeometry);
+                  const point = new Point({ longitude:lastGpsPoint.lon, latitude:lastGpsPoint.lat, spatialReference:{ wkid:4326 } });
+                  createPinAtPoint(point, "Nål skapad vid GPS");
                 }
 
                 function movePinToGps() {
@@ -1489,30 +1421,9 @@ jobs:
                     return;
                   }
 
-                  pendingPinGeometry = {
-                    type:"point",
-                    longitude:lastGpsPoint.lon,
-                    latitude:lastGpsPoint.lat,
-                    spatialReference:{ wkid:4326 }
-                  };
-
+                  pendingPinGeometry = normalizePointGeometry({ longitude:lastGpsPoint.lon, latitude:lastGpsPoint.lat });
                   updatePinCoordsText(pendingPinGeometry);
                   showToast("Nål flyttad till GPS");
-                }
-
-                function openPinPanelForNew(geom) {
-                  closeMenu();
-                  document.getElementById("areaPanel").classList.remove("open");
-
-                  document.getElementById("pinTitle").textContent = "Ny nål";
-                  document.getElementById("pinSub").textContent = "Spara avvikelse på vald plats";
-                  updatePinCoordsText(geom);
-
-                  document.getElementById("pinType").value = "Handjagare krävs";
-                  document.getElementById("pinComment").value = "";
-                  document.getElementById("pinStatus").value = "Öppen";
-                  document.getElementById("deletePinBtn").classList.add("hidden");
-                  document.getElementById("pinPanel").classList.add("open");
                 }
 
                 function openPinPanelForExisting(id) {
@@ -1520,14 +1431,14 @@ jobs:
                   if (!p) return;
 
                   selectedPinId = id;
-                  pendingPinGeometry = p.geometry;
+                  pendingPinGeometry = normalizePointGeometry(p.geometry);
 
                   closeMenu();
                   document.getElementById("areaPanel").classList.remove("open");
 
                   document.getElementById("pinTitle").textContent = p.type || "Egen nål";
                   document.getElementById("pinSub").textContent = p.createdAt ? "Skapad: " + new Date(p.createdAt).toLocaleString("sv-SE") : "Sparad nål";
-                  updatePinCoordsText(p.geometry);
+                  updatePinCoordsText(pendingPinGeometry);
 
                   document.getElementById("pinType").value = p.type || "Annat";
                   document.getElementById("pinComment").value = p.comment || "";
@@ -1544,7 +1455,7 @@ jobs:
 
                   const data = {
                     id:selectedPinId || ("pin_" + Date.now()),
-                    geometry:pendingPinGeometry,
+                    geometry:normalizePointGeometry(pendingPinGeometry),
                     type:document.getElementById("pinType").value,
                     comment:document.getElementById("pinComment").value,
                     status:document.getElementById("pinStatus").value,
@@ -1581,9 +1492,10 @@ jobs:
 
                   pins.forEach(p => {
                     if (!p.geometry) return;
+                    const geom = normalizePointGeometry(p.geometry);
 
                     pinLayer.add(new Graphic({
-                      geometry:p.geometry,
+                      geometry:geom,
                       attributes:Object.assign({}, p, { __type:"pin" }),
                       symbol:{
                         type:"simple-marker",
@@ -1596,18 +1508,14 @@ jobs:
                     }));
 
                     pinLayer.add(new Graphic({
-                      geometry:p.geometry,
-                      symbol:{
-                        type:"text",
-                        text:"!",
-                        color:[255,255,255,1],
-                        font:{ size:16, weight:"bold" },
-                        yoffset:12
-                      }
+                      geometry:geom,
+                      attributes:{ __type:"pin_label", parent:p.id },
+                      symbol:{ type:"text", text:"!", color:[255,255,255,1], font:{ size:16, weight:"bold" }, yoffset:12 }
                     }));
                   });
 
-                  try { pinLayer.reorder(999); } catch(e) {}
+                  try { webmap.layers.reorder(pinLayer, webmap.layers.length - 2); } catch(e) {}
+                  try { webmap.layers.reorder(gpsLayer, webmap.layers.length - 1); } catch(e) {}
                 }
 
                 function pinColor(type,status) {
@@ -1667,9 +1575,7 @@ jobs:
                   });
                 }
 
-                function togglePinMode() {
-                  setPinMode(!addPinMode);
-                }
+                function togglePinMode() { setPinMode(!addPinMode); }
 
                 function setPinMode(v) {
                   addPinMode = v;
@@ -1686,10 +1592,8 @@ jobs:
 
                 function updatePinCoordsText(geom) {
                   if (!geom) return;
-
                   const x = geom.longitude ?? geom.x ?? "-";
                   const y = geom.latitude ?? geom.y ?? "-";
-
                   document.getElementById("pinX").textContent = typeof x === "number" ? x.toFixed(5) : x;
                   document.getElementById("pinY").textContent = typeof y === "number" ? y.toFixed(5) : y;
                 }
@@ -1701,8 +1605,11 @@ jobs:
                   document.getElementById("menuPanel").classList.add("open");
                 }
 
-                function closeMenu() {
-                  document.getElementById("menuPanel").classList.remove("open");
+                function closeMenu() { document.getElementById("menuPanel").classList.remove("open"); }
+
+                function scheduleStatsUpdate() {
+                  clearTimeout(statsTimer);
+                  statsTimer = setTimeout(updateStats, 500);
                 }
 
                 function updateStats() {
@@ -1795,9 +1702,7 @@ jobs:
                     } else {
                       alert(text);
                     }
-                  } catch(e) {
-                    alert(text);
-                  }
+                  } catch(e) { alert(text); }
                 }
 
                 function clearTodayRoute() {
@@ -1806,7 +1711,7 @@ jobs:
 
                   track = track.filter(p => dayKey(p.time) !== today);
                   localStorage.setItem(TRACK_KEY, JSON.stringify(track));
-                  redrawTrack();
+                  redrawTrack(true);
                   updateStats();
                   showToast("Dagens rutt rensad");
                 }
@@ -1818,12 +1723,11 @@ jobs:
                   localStorage.setItem(TRACK_KEY, JSON.stringify(track));
 
                   try {
-                    if (window.AndroidBridge && window.AndroidBridge.clearNativeTrack) {
-                      window.AndroidBridge.clearNativeTrack();
-                    }
+                    if (window.AndroidBridge && window.AndroidBridge.clearNativeTrack) window.AndroidBridge.clearNativeTrack();
                   } catch(e) {}
 
                   routeLayer.removeAll();
+                  routeGraphic = null;
                   updateStats();
                   showToast("Alla rutter rensade");
                 }
@@ -1851,25 +1755,21 @@ jobs:
                   return y + "-" + m + "-" + day;
                 }
 
-                function todayKey() {
-                  return dayKey(new Date().toISOString());
-                }
+                function todayKey() { return dayKey(new Date().toISOString()); }
 
                 function distance(lat1,lon1,lat2,lon2) {
                   const R = 6371000;
                   const r = d => d * Math.PI / 180;
                   const dLat = r(lat2-lat1);
                   const dLon = r(lon2-lon1);
-                  const a = Math.sin(dLat/2)**2 +
-                    Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon/2)**2;
+                  const a = Math.sin(dLat/2)**2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(dLon/2)**2;
                   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
                 }
 
                 function bearing(lat1,lon1,lat2,lon2) {
                   const r = d => d * Math.PI / 180;
                   const y = Math.sin(r(lon2-lon1)) * Math.cos(r(lat2));
-                  const x = Math.cos(r(lat1))*Math.sin(r(lat2)) -
-                    Math.sin(r(lat1))*Math.cos(r(lat2))*Math.cos(r(lon2-lon1));
+                  const x = Math.cos(r(lat1))*Math.sin(r(lat2)) - Math.sin(r(lat1))*Math.cos(r(lat2))*Math.cos(r(lon2-lon1));
                   return normalizeAngle((Math.atan2(y,x) * 180 / Math.PI + 360) % 360);
                 }
 
@@ -1878,9 +1778,7 @@ jobs:
                   return normalizeAngle(a + diff * t);
                 }
 
-                function normalizeAngle(a) {
-                  return ((a % 360) + 360) % 360;
-                }
+                function normalizeAngle(a) { return ((a % 360) + 360) % 360; }
 
                 function label(v) {
                   const m = {
@@ -1895,13 +1793,12 @@ jobs:
                 }
 
                 let toastTimer;
-
                 function showToast(t) {
                   const el = document.getElementById("toast");
                   el.textContent = t;
                   el.classList.add("show");
                   clearTimeout(toastTimer);
-                  toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+                  toastTimer = setTimeout(() => el.classList.remove("show"), 1600);
                 }
               });
             </script>
