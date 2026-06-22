@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 10
-                  versionName 'GPS-FOLLOW-TRACKUP-1.9'
+                  versionCode 11
+                  versionName 'GPS-FOLLOW-TRACKUP-1.10'
               }
           }
           EOF
@@ -541,7 +541,7 @@ jobs:
               <div class="title">Skötselytor GPS</div>
               <div id="mapStatus">Karta: laddar...</div>
               <div id="gpsStatus">GPS: väntar...</div>
-              <div id="followStatus">Följ: låst · riktning upp</div>
+              <div id="followStatus">Följ: laddar område</div>
             </div>
 
             <div id="buttons">
@@ -591,6 +591,7 @@ jobs:
               let totalTrackMeters = 0;
 
               let lastFollowAt = 0;
+              let preloadUntil = 0;
 
               function setMapStatus(text, cls) {
                 mapStatus.innerHTML = "Karta: <span class='" + cls + "'>" + text + "</span>";
@@ -604,12 +605,26 @@ jobs:
                 if (followGps) {
                   followBtn.textContent = "FÖLJ";
                   followBtn.classList.add("active");
-                  followStatus.innerHTML = "Följ: <span class='ok'>låst · riktning upp</span>";
+
+                  if (isPreloading()) {
+                    followStatus.innerHTML = "Följ: <span class='warn'>laddar område</span>";
+                  } else {
+                    followStatus.innerHTML = "Följ: <span class='ok'>låst · riktning upp</span>";
+                  }
                 } else {
                   followBtn.textContent = "FRI";
                   followBtn.classList.remove("active");
                   followStatus.innerHTML = "Följ: <span class='warn'>fri</span>";
                 }
+              }
+
+              function isPreloading() {
+                return performance.now() < preloadUntil;
+              }
+
+              function startPreload(ms) {
+                preloadUntil = performance.now() + ms;
+                updateFollowUi();
               }
 
               followBtn.onclick = function() {
@@ -619,6 +634,7 @@ jobs:
                 if (followGps && displayPos) {
                   lastFollowAt = 0;
                   moveMap(displayPos.lon, displayPos.lat, true);
+                  startPreload(1400);
                 }
               };
 
@@ -707,6 +723,7 @@ jobs:
                     trackPaths = [[[lon, lat]]];
 
                     moveMap(lon, lat, true);
+                    startPreload(1800);
                   } else {
                     const jump = roughDistanceMeters(lastAccepted.lat, lastAccepted.lon, lat, lon);
 
@@ -726,7 +743,7 @@ jobs:
                     lastAccepted = next;
                   }
 
-                  if (followGps) {
+                  if (followGps && !isPreloading()) {
                     moveMap(lon, lat, false);
                   }
 
@@ -801,7 +818,11 @@ jobs:
 
                 const now = performance.now();
 
-                if (!force && now - lastFollowAt < 350) {
+                if (!force && now - lastFollowAt < 250) {
+                  return;
+                }
+
+                if (!force && isPreloading()) {
                   return;
                 }
 
@@ -816,12 +837,15 @@ jobs:
                 }
 
                 view.goTo(target, {
-                  animate: false
+                  duration: force ? 180 : 240,
+                  easing: "linear"
                 }).catch(function(){});
               }
 
               function loop() {
                 if (targetPos && displayPos && view && window.__ArcGIS) {
+                  const wasPreloading = isPreloading();
+
                   displayPos = {
                     lon: lerp(displayPos.lon, targetPos.lon, 0.28),
                     lat: lerp(displayPos.lat, targetPos.lat, 0.28)
@@ -829,6 +853,19 @@ jobs:
 
                   drawTrack();
                   drawGpsOverlay(displayPos.lon, displayPos.lat);
+
+                  if (followGps && !isPreloading()) {
+                    moveMap(displayPos.lon, displayPos.lat, false);
+                  }
+
+                  if (wasPreloading && !isPreloading()) {
+                    lastFollowAt = 0;
+                    updateFollowUi();
+
+                    if (followGps && displayPos) {
+                      moveMap(displayPos.lon, displayPos.lat, true);
+                    }
+                  }
                 }
 
                 requestAnimationFrame(loop);
