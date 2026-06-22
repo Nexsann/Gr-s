@@ -26,25 +26,11 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create WebView safe Android project
+      - name: Create absolute minimal Android project
         run: |
           rm -rf app
-          mkdir -p app/src/main/java/se/skotselytor/gpswebsafe
-          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/java/se/skotselytor/starttest
           mkdir -p app/src/main/res/values
-
-          if [ -f ".github/workflows/skotselytorr.geojoson" ]; then
-            cp ".github/workflows/skotselytorr.geojoson" app/src/main/assets/skotselytor.geojson
-          elif [ -f ".github/workflows/skotselytor.geojson" ]; then
-            cp ".github/workflows/skotselytor.geojson" app/src/main/assets/skotselytor.geojson
-          elif [ -f ".github/workflows/query (1)" ]; then
-            cp ".github/workflows/query (1)" app/src/main/assets/skotselytor.geojson
-          else
-            echo '{"type":"FeatureCollection","features":[]}' > app/src/main/assets/skotselytor.geojson
-          fi
-
-          curl -L --retry 3 "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" -o app/src/main/assets/leaflet.css
-          curl -L --retry 3 "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" -o app/src/main/assets/leaflet.js
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -63,7 +49,7 @@ jobs:
               }
           }
 
-          rootProject.name = "SkotselytorGPSWebSafe"
+          rootProject.name = "SkotselytorStartTest"
           include ":app"
           EOF
 
@@ -79,15 +65,15 @@ jobs:
           }
 
           android {
-              namespace "se.skotselytor.gpswebsafe"
+              namespace "se.skotselytor.starttest"
               compileSdk 35
 
               defaultConfig {
-                  applicationId "se.skotselytor.gpswebsafe"
+                  applicationId "se.skotselytor.starttest"
                   minSdk 26
                   targetSdk 35
                   versionCode 1
-                  versionName "4.0-websafe"
+                  versionName "0.1-starttest"
               }
           }
           EOF
@@ -97,12 +83,8 @@ jobs:
           <resources>
               <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
                   <item name="android:windowNoTitle">true</item>
-                  <item name="android:windowFullscreen">true</item>
                   <item name="android:fontFamily">sans</item>
                   <item name="android:colorAccent">#22c55e</item>
-                  <item name="android:navigationBarColor">#020617</item>
-                  <item name="android:statusBarColor">#020617</item>
-                  <item name="android:windowLightStatusBar">false</item>
               </style>
           </resources>
           EOF
@@ -111,14 +93,9 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor GPS WebSafe"
-                  android:usesCleartextTraffic="true"
+                  android:label="Skötselytor Starttest"
                   android:hardwareAccelerated="true">
 
                   <activity
@@ -135,891 +112,47 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/gpswebsafe/MainActivity.java <<'EOF'
-          package se.skotselytor.gpswebsafe;
+          cat > app/src/main/java/se/skotselytor/starttest/MainActivity.java <<'EOF'
+          package se.skotselytor.starttest;
 
-          import android.Manifest;
-          import android.annotation.SuppressLint;
           import android.app.Activity;
-          import android.content.pm.PackageManager;
-          import android.os.Build;
+          import android.graphics.Color;
           import android.os.Bundle;
-          import android.view.View;
-          import android.view.Window;
-          import android.view.WindowInsets;
-          import android.view.WindowInsetsController;
-          import android.view.WindowManager;
-          import android.webkit.GeolocationPermissions;
-          import android.webkit.JavascriptInterface;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-
-          import java.io.ByteArrayOutputStream;
-          import java.io.InputStream;
+          import android.view.Gravity;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
 
           public class MainActivity extends Activity {
-              private static final int LOCATION_REQUEST = 1001;
-
-              private WebView webView;
-              private GeolocationPermissions.Callback geoCallback;
-              private String geoOrigin;
-
-              @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
-                  requestWindowFeature(Window.FEATURE_NO_TITLE);
-                  getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                  hideSystemBars();
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(40, 40, 40, 40);
+                  root.setBackgroundColor(Color.rgb(2, 6, 23));
 
-                  webView = new WebView(this);
-                  setContentView(webView);
+                  TextView title = new TextView(this);
+                  title.setText("Skötselytor Starttest");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(26);
+                  title.setGravity(Gravity.CENTER);
+                  title.setTypeface(null, 1);
 
-                  WebSettings s = webView.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  s.setDatabaseEnabled(true);
-                  s.setGeolocationEnabled(true);
-                  s.setAllowFileAccess(true);
-                  s.setAllowContentAccess(true);
-                  s.setAllowFileAccessFromFileURLs(true);
-                  s.setAllowUniversalAccessFromFileURLs(true);
-                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                  s.setCacheMode(WebSettings.LOAD_DEFAULT);
-                  s.setMediaPlaybackRequiresUserGesture(false);
+                  TextView text = new TextView(this);
+                  text.setText("Om du ser detta fungerar appstarten.\n\nNästa steg är att lägga tillbaka WebView/karta.");
+                  text.setTextColor(Color.rgb(203, 213, 225));
+                  text.setTextSize(16);
+                  text.setGravity(Gravity.CENTER);
+                  text.setPadding(0, 24, 0, 0);
 
-                  webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
+                  root.addView(title);
+                  root.addView(text);
 
-                  webView.setWebViewClient(new WebViewClient());
-
-                  webView.setWebChromeClient(new WebChromeClient() {
-                      @Override
-                      public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                          geoOrigin = origin;
-                          geoCallback = callback;
-
-                          boolean granted = true;
-
-                          if (Build.VERSION.SDK_INT >= 23) {
-                              granted =
-                                  checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                                  checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-                          }
-
-                          if (granted) {
-                              callback.invoke(origin, true, false);
-                          } else if (Build.VERSION.SDK_INT >= 23) {
-                              requestPermissions(new String[] {
-                                  Manifest.permission.ACCESS_FINE_LOCATION,
-                                  Manifest.permission.ACCESS_COARSE_LOCATION
-                              }, LOCATION_REQUEST);
-                          }
-                      }
-                  });
-
-                  webView.loadUrl("file:///android_asset/index.html");
-              }
-
-              private void hideSystemBars() {
-                  if (Build.VERSION.SDK_INT >= 30) {
-                      WindowInsetsController c = getWindow().getInsetsController();
-                      if (c != null) {
-                          c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                          c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                      }
-                  }
-
-                  getWindow().getDecorView().setSystemUiVisibility(
-                      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                          | View.SYSTEM_UI_FLAG_FULLSCREEN
-                          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                          | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                          | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                          | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  );
-              }
-
-              @Override
-              protected void onResume() {
-                  super.onResume();
-                  hideSystemBars();
-              }
-
-              @Override
-              public void onWindowFocusChanged(boolean hasFocus) {
-                  super.onWindowFocusChanged(hasFocus);
-                  if (hasFocus) hideSystemBars();
-              }
-
-              @Override
-              public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-                  if (requestCode == LOCATION_REQUEST) {
-                      boolean granted = false;
-
-                      for (int result : grantResults) {
-                          if (result == PackageManager.PERMISSION_GRANTED) {
-                              granted = true;
-                              break;
-                          }
-                      }
-
-                      if (geoCallback != null && geoOrigin != null) {
-                          geoCallback.invoke(geoOrigin, granted, false);
-                          geoCallback = null;
-                          geoOrigin = null;
-                      }
-                  }
-              }
-
-              public class AndroidBridge {
-                  @JavascriptInterface
-                  public String readAsset(String filename) {
-                      try {
-                          InputStream is = getAssets().open(filename);
-                          ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                          byte[] buffer = new byte[16384];
-                          int read;
-
-                          while ((read = is.read(buffer)) != -1) {
-                              bos.write(buffer, 0, read);
-                          }
-
-                          is.close();
-                          return bos.toString("UTF-8");
-                      } catch (Exception e) {
-                          return "";
-                      }
-                  }
+                  setContentView(root);
               }
           }
-          EOF
-
-          cat > app/src/main/assets/index.html <<'EOF'
-          <!doctype html>
-          <html lang="sv">
-          <head>
-            <meta charset="utf-8"/>
-            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-            <title>Skötselytor GPS WebSafe</title>
-            <link rel="stylesheet" href="leaflet.css">
-            <script src="leaflet.js"></script>
-
-            <style>
-              html, body, #map {
-                margin:0;
-                padding:0;
-                height:100%;
-                width:100%;
-                overflow:hidden;
-                font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-                background:#020617;
-              }
-
-              * {
-                box-sizing:border-box;
-                -webkit-tap-highlight-color:transparent;
-              }
-
-              .topbar {
-                position:fixed;
-                top:0;
-                left:0;
-                right:0;
-                z-index:1000;
-                background:linear-gradient(135deg,#052e5c,#064e3b);
-                color:white;
-                padding:calc(10px + env(safe-area-inset-top)) 10px 10px 10px;
-                box-shadow:0 10px 28px rgba(0,0,0,.35);
-              }
-
-              .title {
-                display:flex;
-                justify-content:space-between;
-                align-items:center;
-                gap:8px;
-              }
-
-              .titleText {
-                min-width:0;
-              }
-
-              .titleText b {
-                display:block;
-                font-size:15px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .titleText span {
-                display:block;
-                font-size:11px;
-                opacity:.85;
-                margin-top:2px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .buttons {
-                display:grid;
-                grid-template-columns:1fr 1fr 1fr;
-                gap:7px;
-                margin-top:9px;
-              }
-
-              button {
-                border:0;
-                border-radius:14px;
-                padding:11px 8px;
-                font-weight:850;
-                font-size:12px;
-                cursor:pointer;
-              }
-
-              .btn {
-                background:rgba(255,255,255,.16);
-                color:white;
-              }
-
-              .primary {
-                background:#22c55e;
-                color:#052e16;
-              }
-
-              .warn {
-                background:#f59e0b !important;
-                color:#451a03 !important;
-              }
-
-              .danger {
-                background:#ef4444 !important;
-                color:white !important;
-              }
-
-              .stats {
-                position:fixed;
-                top:calc(128px + env(safe-area-inset-top));
-                left:8px;
-                right:8px;
-                z-index:900;
-                display:grid;
-                grid-template-columns:1fr 1fr 1fr;
-                gap:7px;
-                pointer-events:none;
-              }
-
-              .stat {
-                background:rgba(255,255,255,.94);
-                color:#0f172a;
-                border-radius:16px;
-                padding:9px 10px;
-                box-shadow:0 8px 22px rgba(0,0,0,.18);
-                min-width:0;
-              }
-
-              .stat b {
-                display:block;
-                font-size:10px;
-                color:#64748b;
-                text-transform:uppercase;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .stat span {
-                display:block;
-                font-size:14px;
-                font-weight:900;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-              }
-
-              .bottom {
-                position:fixed;
-                left:8px;
-                right:8px;
-                bottom:calc(8px + env(safe-area-inset-bottom));
-                z-index:950;
-                display:grid;
-                grid-template-columns:1fr 1fr 1fr;
-                gap:7px;
-              }
-
-              .bottom button {
-                background:#0f172a;
-                color:white;
-                box-shadow:0 10px 28px rgba(0,0,0,.25);
-              }
-
-              .toast {
-                position:fixed;
-                left:50%;
-                bottom:calc(72px + env(safe-area-inset-bottom));
-                transform:translateX(-50%);
-                z-index:1500;
-                background:#020617;
-                color:white;
-                border-radius:999px;
-                padding:11px 16px;
-                font-weight:900;
-                opacity:0;
-                transition:.2s;
-                white-space:nowrap;
-                box-shadow:0 12px 28px rgba(0,0,0,.3);
-              }
-
-              .toast.show {
-                opacity:1;
-              }
-
-              .pinIcon {
-                width:34px;
-                height:34px;
-                border-radius:999px;
-                border:4px solid white;
-                background:#f59e0b;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                color:white;
-                font-weight:1000;
-                box-shadow:0 5px 14px rgba(0,0,0,.35);
-              }
-
-              .gpsIcon {
-                width:24px;
-                height:24px;
-                border-radius:999px;
-                background:#0ea5e9;
-                border:4px solid white;
-                box-shadow:0 4px 14px rgba(0,0,0,.4);
-              }
-
-              .progressWrap {
-                height:5px;
-                background:rgba(255,255,255,.16);
-                border-radius:999px;
-                overflow:hidden;
-                margin-top:8px;
-                display:none;
-              }
-
-              .progressBar {
-                height:100%;
-                width:0%;
-                background:#22c55e;
-                transition:.15s;
-              }
-            </style>
-          </head>
-
-          <body>
-            <div id="map"></div>
-
-            <div class="topbar">
-              <div class="title">
-                <div class="titleText">
-                  <b>Skötselytor GPS WebSafe</b>
-                  <span id="statusText">Säker WebView-start. Ytor laddas manuellt.</span>
-                </div>
-              </div>
-
-              <div class="progressWrap" id="progressWrap">
-                <div class="progressBar" id="progressBar"></div>
-              </div>
-
-              <div class="buttons">
-                <button class="primary" id="loadBtn">Ladda ytor</button>
-                <button class="btn" id="gpsBtn">GPS</button>
-                <button class="btn" id="pinBtn">Nål här</button>
-              </div>
-            </div>
-
-            <div class="stats">
-              <div class="stat"><b>GPS</b><span id="gpsInfo">Av</span></div>
-              <div class="stat"><b>Ytor</b><span id="surfaceInfo">0</span></div>
-              <div class="stat"><b>Nålar</b><span id="pinInfo">0</span></div>
-            </div>
-
-            <div class="bottom">
-              <button id="fitBtn">Visa allt</button>
-              <button id="clearPinsBtn">Rensa nålar</button>
-              <button id="clearRouteBtn">Rensa rutt</button>
-            </div>
-
-            <div class="toast" id="toast">OK</div>
-
-            <script>
-              let map;
-              let surfaceLayer;
-              let pinLayer;
-              let gpsLayer;
-              let routeLayer;
-              let gpsMarker = null;
-              let routeLine = null;
-              let watchId = null;
-              let lastGps = null;
-              let followGps = false;
-              let surfacesLoaded = false;
-              let loading = false;
-              let pinCount = 0;
-              let route = [];
-
-              init();
-
-              function init() {
-                try {
-                  map = L.map("map", {
-                    zoomControl:false,
-                    preferCanvas:true,
-                    inertia:true,
-                    zoomAnimation:true,
-                    markerZoomAnimation:false
-                  }).setView([58.4108, 15.6214], 13);
-
-                  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                    maxZoom:22,
-                    maxNativeZoom:19,
-                    attribution:"© OpenStreetMap",
-                    updateWhenIdle:true,
-                    updateWhenZooming:false,
-                    keepBuffer:2
-                  }).addTo(map);
-
-                  L.control.zoom({ position:"bottomright" }).addTo(map);
-
-                  surfaceLayer = L.geoJSON(null, {
-                    renderer:L.canvas({ padding:0.5 }),
-                    smoothFactor:2.5,
-                    style:styleFeature,
-                    onEachFeature:onEachFeature
-                  }).addTo(map);
-
-                  pinLayer = L.layerGroup().addTo(map);
-                  routeLayer = L.layerGroup().addTo(map);
-                  gpsLayer = L.layerGroup().addTo(map);
-
-                  map.on("contextmenu", e => addPin(e.latlng));
-                  map.on("click", e => {
-                    if (window.__addPinMode) {
-                      addPin(e.latlng);
-                      window.__addPinMode = false;
-                      toast("Nål skapad");
-                    }
-                  });
-
-                  document.getElementById("loadBtn").onclick = loadSurfaces;
-                  document.getElementById("gpsBtn").onclick = toggleGps;
-                  document.getElementById("pinBtn").onclick = pinHere;
-                  document.getElementById("fitBtn").onclick = fitAll;
-                  document.getElementById("clearPinsBtn").onclick = clearPins;
-                  document.getElementById("clearRouteBtn").onclick = clearRoute;
-
-                  status("Kartan startad. Tryck Ladda ytor.");
-                  toast("Appen startade");
-                } catch(e) {
-                  alert("Startfel: " + e.message);
-                }
-              }
-
-              function loadSurfaces() {
-                if (surfacesLoaded) {
-                  toast("Ytor redan laddade");
-                  return;
-                }
-
-                if (loading) {
-                  toast("Laddar redan");
-                  return;
-                }
-
-                loading = true;
-                setProgress(2);
-                status("Läser offlinefil...");
-
-                setTimeout(() => {
-                  try {
-                    let text = "";
-
-                    if (window.AndroidBridge && window.AndroidBridge.readAsset) {
-                      text = window.AndroidBridge.readAsset("skotselytor.geojson");
-                    }
-
-                    if (!text) {
-                      status("Offlinefil saknas eller är tom");
-                      toast("Offlinefil saknas");
-                      loading = false;
-                      setProgress(0);
-                      return;
-                    }
-
-                    const data = JSON.parse(text);
-                    const features = Array.isArray(data.features) ? data.features : [];
-
-                    status("Hittade " + features.length + " ytor. Ritar lugnt...");
-                    addFeaturesChunked(features, 0, 40);
-                  } catch(e) {
-                    console.log(e);
-                    status("Fel när offlinefilen lästes");
-                    toast("Fel i offlinefil");
-                    loading = false;
-                    setProgress(0);
-                  }
-                }, 100);
-              }
-
-              function addFeaturesChunked(features, index, batchSize) {
-                const end = Math.min(index + batchSize, features.length);
-                const part = [];
-
-                for (let i = index; i < end; i++) {
-                  const f = simplifyFeature(features[i]);
-                  if (f) part.push(f);
-                }
-
-                try {
-                  surfaceLayer.addData({
-                    type:"FeatureCollection",
-                    features:part
-                  });
-                } catch(e) {
-                  console.log("batch error", e);
-                }
-
-                const pct = Math.round((end / Math.max(1, features.length)) * 100);
-                setProgress(pct);
-                document.getElementById("surfaceInfo").textContent = String(end);
-                status("Ritar ytor: " + end + " / " + features.length);
-
-                if (end < features.length) {
-                  setTimeout(() => addFeaturesChunked(features, end, batchSize), 35);
-                } else {
-                  surfacesLoaded = true;
-                  loading = false;
-                  setProgress(0);
-                  status("Offline-data laddad: " + features.length + " ytor");
-                  toast("Ytor laddade");
-                  fitAll();
-                }
-              }
-
-              function simplifyFeature(feature) {
-                try {
-                  if (!feature || !feature.geometry) return null;
-
-                  const geom = feature.geometry;
-                  const type = geom.type;
-
-                  if (type !== "Polygon" && type !== "MultiPolygon") return null;
-
-                  const clone = {
-                    type:"Feature",
-                    properties:feature.properties || {},
-                    geometry:{
-                      type:type,
-                      coordinates:null
-                    }
-                  };
-
-                  if (type === "Polygon") {
-                    clone.geometry.coordinates = geom.coordinates.map(ring => simplifyRing(ring));
-                  } else {
-                    clone.geometry.coordinates = geom.coordinates.map(poly => poly.map(ring => simplifyRing(ring)));
-                  }
-
-                  return clone;
-                } catch(e) {
-                  return null;
-                }
-              }
-
-              function simplifyRing(ring) {
-                if (!Array.isArray(ring)) return [];
-
-                let step = 1;
-                const len = ring.length;
-
-                if (len > 1800) step = 18;
-                else if (len > 1200) step = 12;
-                else if (len > 700) step = 8;
-                else if (len > 350) step = 4;
-                else if (len > 180) step = 2;
-
-                const out = [];
-
-                for (let i = 0; i < len; i += step) {
-                  const c = ring[i];
-                  if (!c || c.length < 2) continue;
-
-                  const lon = Number(c[0]);
-                  const lat = Number(c[1]);
-
-                  if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-                  if (lat < 55 || lat > 70 || lon < 10 || lon > 25) continue;
-
-                  out.push([lon, lat]);
-                }
-
-                if (out.length >= 3) {
-                  const first = out[0];
-                  const last = out[out.length - 1];
-
-                  if (first[0] !== last[0] || first[1] !== last[1]) {
-                    out.push(first);
-                  }
-                }
-
-                return out;
-              }
-
-              function styleFeature(feature) {
-                const p = feature.properties || {};
-                const sub = String(p.SUBTYP || p.TYP || "").toLowerCase();
-
-                if (sub.includes("bruks")) {
-                  return { color:"#0f766e", weight:0.8, fillColor:"#22c55e", fillOpacity:0.24 };
-                }
-
-                if (sub.includes("äng") || sub.includes("ang") || sub.includes("hög")) {
-                  return { color:"#a16207", weight:0.8, fillColor:"#eab308", fillOpacity:0.22 };
-                }
-
-                if (sub.includes("plantering")) {
-                  return { color:"#7e22ce", weight:0.8, fillColor:"#a855f7", fillOpacity:0.18 };
-                }
-
-                return { color:"#082e5c", weight:0.7, fillColor:"#38bdf8", fillOpacity:0.15 };
-              }
-
-              function onEachFeature(feature, layer) {
-                layer.on("click", () => {
-                  const p = feature.properties || {};
-                  const title = p.SUBTYP || p.TYP || "Skötselyta";
-
-                  let msg = "";
-                  msg += line("OBJECTID", p.OBJECTID);
-                  msg += line("TYP", p.TYP);
-                  msg += line("SUBTYP", p.SUBTYP);
-                  msg += line("DISTRIKT", p.DISTRIKT);
-                  msg += line("TEAM", p.TEAM);
-                  msg += line("FASTIGHET", p.FASTIGHET);
-                  msg += line("AREA", p.Shape__Area);
-
-                  alert(title + "\\n\\n" + (msg || "Ingen extra info"));
-                });
-              }
-
-              function line(k, v) {
-                if (v === undefined || v === null || String(v).trim() === "") return "";
-                return k + ": " + v + "\\n";
-              }
-
-              function toggleGps() {
-                if (watchId !== null) {
-                  navigator.geolocation.clearWatch(watchId);
-                  watchId = null;
-                  followGps = false;
-                  gpsInfo("Av");
-                  toast("GPS stoppad");
-                  return;
-                }
-
-                if (!navigator.geolocation) {
-                  toast("GPS stöds inte");
-                  return;
-                }
-
-                followGps = true;
-                gpsInfo("Startar...");
-
-                watchId = navigator.geolocation.watchPosition(pos => {
-                  const c = pos.coords;
-                  const p = {
-                    lat:c.latitude,
-                    lon:c.longitude,
-                    acc:Math.round(c.accuracy || 0),
-                    time:Date.now()
-                  };
-
-                  gpsInfo("±" + p.acc + " m");
-
-                  if (p.acc > 100) return;
-
-                  lastGps = p;
-                  drawGps(p);
-                  addRoute(p);
-
-                  if (followGps) {
-                    map.panTo([p.lat, p.lon], { animate:true, duration:0.25 });
-                  }
-                }, err => {
-                  gpsInfo("Fel");
-                  toast("GPS-fel");
-                  console.log(err);
-                }, {
-                  enableHighAccuracy:true,
-                  maximumAge:1000,
-                  timeout:12000
-                });
-
-                toast("GPS startad");
-              }
-
-              function drawGps(p) {
-                const latlng = [p.lat, p.lon];
-
-                if (!gpsMarker) {
-                  const icon = L.divIcon({
-                    className:"",
-                    html:'<div class="gpsIcon"></div>',
-                    iconSize:[24,24],
-                    iconAnchor:[12,12]
-                  });
-
-                  gpsMarker = L.marker(latlng, {
-                    icon,
-                    interactive:false,
-                    zIndexOffset:9999
-                  }).addTo(gpsLayer);
-                } else {
-                  gpsMarker.setLatLng(latlng);
-                }
-              }
-
-              function addRoute(p) {
-                route.push([p.lat, p.lon]);
-
-                while (route.length > 8000) {
-                  route.shift();
-                }
-
-                if (!routeLine) {
-                  routeLine = L.polyline(route, {
-                    color:"#0ea5e9",
-                    weight:5,
-                    opacity:0.95,
-                    smoothFactor:1.2,
-                    interactive:false
-                  }).addTo(routeLayer);
-                } else {
-                  routeLine.setLatLngs(route);
-                }
-              }
-
-              function pinHere() {
-                if (!lastGps) {
-                  toast("Starta GPS först");
-                  return;
-                }
-
-                addPin([lastGps.lat, lastGps.lon]);
-              }
-
-              function addPin(latlng) {
-                const icon = L.divIcon({
-                  className:"",
-                  html:'<div class="pinIcon">!</div>',
-                  iconSize:[34,34],
-                  iconAnchor:[17,34]
-                });
-
-                const m = L.marker(latlng, {
-                  icon,
-                  zIndexOffset:5000
-                }).addTo(pinLayer);
-
-                m.on("click", () => {
-                  if (confirm("Handjagare krävs\\n\\nTa bort denna nål?")) {
-                    pinLayer.removeLayer(m);
-                    pinCount = Math.max(0, pinCount - 1);
-                    updatePins();
-                  }
-                });
-
-                pinCount++;
-                updatePins();
-                toast("Nål sparad");
-              }
-
-              function clearPins() {
-                pinLayer.clearLayers();
-                pinCount = 0;
-                updatePins();
-                toast("Nålar rensade");
-              }
-
-              function clearRoute() {
-                route = [];
-                routeLayer.clearLayers();
-                routeLine = null;
-                toast("Rutt rensad");
-              }
-
-              function fitAll() {
-                try {
-                  if (surfaceLayer && surfaceLayer.getLayers().length > 0) {
-                    const b = surfaceLayer.getBounds();
-                    if (b.isValid()) {
-                      map.fitBounds(b, { padding:[25,25], animate:true });
-                      return;
-                    }
-                  }
-
-                  if (lastGps) {
-                    map.setView([lastGps.lat, lastGps.lon], 17);
-                    return;
-                  }
-
-                  map.setView([58.4108, 15.6214], 13);
-                } catch(e) {
-                  map.setView([58.4108, 15.6214], 13);
-                }
-              }
-
-              function setProgress(pct) {
-                const wrap = document.getElementById("progressWrap");
-                const bar = document.getElementById("progressBar");
-
-                if (pct <= 0) {
-                  wrap.style.display = "none";
-                  bar.style.width = "0%";
-                } else {
-                  wrap.style.display = "block";
-                  bar.style.width = pct + "%";
-                }
-              }
-
-              function status(t) {
-                document.getElementById("statusText").textContent = t;
-              }
-
-              function gpsInfo(t) {
-                document.getElementById("gpsInfo").textContent = t;
-              }
-
-              function updatePins() {
-                document.getElementById("pinInfo").textContent = String(pinCount);
-              }
-
-              let toastTimer;
-              function toast(t) {
-                const el = document.getElementById("toast");
-                el.textContent = t;
-                el.classList.add("show");
-                clearTimeout(toastTimer);
-                toastTimer = setTimeout(() => el.classList.remove("show"), 1500);
-              }
-            </script>
-          </body>
-          </html>
           EOF
 
       - name: Build APK
@@ -1028,5 +161,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-gps-websafe-apk
+          name: skotselytor-starttest-apk
           path: app/build/outputs/apk/debug/app-debug.apk
