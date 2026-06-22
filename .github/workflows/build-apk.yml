@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 6
-                  versionName 'GPS-TRACKUP-1.5'
+                  versionCode 7
+                  versionName 'GPS-FOLLOW-TRACKUP-1.6'
               }
           }
           EOF
@@ -132,20 +132,37 @@ jobs:
           import android.os.Bundle;
           import android.os.Build;
           import android.content.pm.PackageManager;
+          import android.hardware.Sensor;
+          import android.hardware.SensorEvent;
+          import android.hardware.SensorEventListener;
+          import android.hardware.SensorManager;
           import android.view.Display;
           import android.view.View;
           import android.view.Window;
           import android.view.WindowManager;
           import android.webkit.ConsoleMessage;
           import android.webkit.GeolocationPermissions;
+          import android.webkit.JavascriptInterface;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
 
-          public class MainActivity extends Activity {
+          public class MainActivity extends Activity implements SensorEventListener {
               private WebView webView;
               private static final int LOCATION_REQUEST = 1001;
+
+              private SensorManager sensorManager;
+              private Sensor rotationVectorSensor;
+              private Sensor accelSensor;
+              private Sensor magnetSensor;
+
+              private final float[] accelValues = new float[3];
+              private final float[] magnetValues = new float[3];
+              private boolean hasAccel = false;
+              private boolean hasMagnet = false;
+
+              private volatile double headingDeg = -1.0;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -169,6 +186,13 @@ jobs:
                       View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                   );
 
+                  sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+                  if (sensorManager != null) {
+                      rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+                      accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+                      magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+                  }
+
                   requestLocationPermissionIfNeeded();
 
                   webView = new WebView(this);
@@ -187,6 +211,8 @@ jobs:
                   settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+                  webView.addJavascriptInterface(new SensorBridge(), "AndroidSensors");
+
                   webView.setWebViewClient(new WebViewClient());
 
                   webView.setWebChromeClient(new WebChromeClient() {
@@ -202,6 +228,93 @@ jobs:
                   });
 
                   webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  if (sensorManager != null) {
+                      if (rotationVectorSensor != null) {
+                          sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_GAME);
+                      }
+                      if (accelSensor != null) {
+                          sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME);
+                      }
+                      if (magnetSensor != null) {
+                          sensorManager.registerListener(this, magnetSensor, SensorManager.SENSOR_DELAY_GAME);
+                      }
+                  }
+              }
+
+              @Override
+              protected void onPause() {
+                  super.onPause();
+                  if (sensorManager != null) {
+                      sensorManager.unregisterListener(this);
+                  }
+              }
+
+              @Override
+              public void onSensorChanged(SensorEvent event) {
+                  try {
+                      if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
+                          float[] rotationMatrix = new float[9];
+                          float[] orientation = new float[3];
+
+                          SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values);
+                          SensorManager.getOrientation(rotationMatrix, orientation);
+
+                          double deg = Math.toDegrees(orientation[0]);
+                          headingDeg = normalizeDeg(deg);
+                          return;
+                      }
+
+                      if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+                          System.arraycopy(event.values, 0, accelValues, 0, 3);
+                          hasAccel = true;
+                      }
+
+                      if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
+                          System.arraycopy(event.values, 0, magnetValues, 0, 3);
+                          hasMagnet = true;
+                      }
+
+                      if (hasAccel && hasMagnet) {
+                          float[] rotationMatrix = new float[9];
+                          float[] inclinationMatrix = new float[9];
+
+                          boolean success = SensorManager.getRotationMatrix(
+                              rotationMatrix,
+                              inclinationMatrix,
+                              accelValues,
+                              magnetValues
+                          );
+
+                          if (success) {
+                              float[] orientation = new float[3];
+                              SensorManager.getOrientation(rotationMatrix, orientation);
+
+                              double deg = Math.toDegrees(orientation[0]);
+                              headingDeg = normalizeDeg(deg);
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              @Override
+              public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+
+              private double normalizeDeg(double deg) {
+                  double d = deg % 360.0;
+                  if (d < 0) d += 360.0;
+                  return d;
+              }
+
+              public class SensorBridge {
+                  @JavascriptInterface
+                  public double getHeading() {
+                      return headingDeg;
+                  }
               }
 
               private void requestLocationPermissionIfNeeded() {
@@ -351,8 +464,8 @@ jobs:
                 width: 40px;
                 height: 40px;
                 border-radius: 9999px;
-                background: rgba(26, 115, 232, 0.06);
-                border: 1px solid rgba(26, 115, 232, 0.22);
+                background: rgba(26, 115, 232, 0.055);
+                border: 1px solid rgba(26, 115, 232, 0.20);
                 transform: translate(-50%, -50%);
               }
 
@@ -360,8 +473,8 @@ jobs:
                 position: absolute;
                 left: 0;
                 top: 0;
-                width: 34px;
-                height: 34px;
+                width: 36px;
+                height: 36px;
                 transform: translate(-50%, -50%);
                 transform-origin: 50% 50%;
               }
@@ -369,20 +482,20 @@ jobs:
               #headingCone {
                 position: absolute;
                 left: 50%;
-                top: -3px;
-                width: 18px;
-                height: 25px;
+                top: -4px;
+                width: 19px;
+                height: 27px;
                 transform: translateX(-50%);
                 opacity: 0;
-                filter: drop-shadow(0 1px 2px rgba(0,0,0,0.22));
+                filter: drop-shadow(0 1px 2px rgba(0,0,0,0.24));
               }
 
               #headingCone::before {
                 content: "";
                 position: absolute;
                 inset: 0;
-                background: rgba(255,255,255,0.95);
-                clip-path: polygon(50% 0%, 92% 100%, 8% 100%);
+                background: rgba(255,255,255,0.96);
+                clip-path: polygon(50% 0%, 94% 100%, 6% 100%);
               }
 
               #headingCone::after {
@@ -392,8 +505,8 @@ jobs:
                 right: 4px;
                 top: 4px;
                 bottom: 3px;
-                background: rgba(26,115,232,0.36);
-                clip-path: polygon(50% 0%, 92% 100%, 8% 100%);
+                background: rgba(26,115,232,0.42);
+                clip-path: polygon(50% 0%, 94% 100%, 6% 100%);
               }
 
               #markerRotator.hasHeading #headingCone {
@@ -455,19 +568,28 @@ jobs:
               const markerRotator = document.getElementById("markerRotator");
 
               let view;
-              let trackLayer;
+
+              let trackHaloGraphic = null;
+              let trackLineGraphic = null;
+
               let followGps = true;
 
               let displayPos = null;
               let targetPos = null;
               let lastAccepted = null;
-              let lastHeadingDeg = 0;
-              let hasHeading = false;
+
+              let courseHeadingDeg = 0;
+              let hasCourseHeading = false;
+
+              let deviceHeadingDeg = null;
+
               let lastSpeedKmh = 0;
               let lastAccuracy = 0;
 
               let trackPaths = [];
+              let lastTrackPoint = null;
               let totalTrackMeters = 0;
+
               let lastFollowAt = 0;
 
               function setMapStatus(text, cls) {
@@ -511,15 +633,16 @@ jobs:
                 setMapStatus("JS-fel: " + e.message, "bad");
               });
 
+              setInterval(readNativeHeading, 80);
+
               require([
                 "esri/config",
                 "esri/WebMap",
                 "esri/views/MapView",
                 "esri/Graphic",
-                "esri/layers/GraphicsLayer",
                 "esri/geometry/Polyline",
                 "esri/geometry/Point"
-              ], function(esriConfig, WebMap, MapView, Graphic, GraphicsLayer, Polyline, Point) {
+              ], function(esriConfig, WebMap, MapView, Graphic, Polyline, Point) {
                 esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
 
                 const webmap = new WebMap({
@@ -527,9 +650,6 @@ jobs:
                     id: "4811ba982b9e4a97b01cf4353224374b"
                   }
                 });
-
-                trackLayer = new GraphicsLayer({ title: "GPS-spår" });
-                webmap.add(trackLayer);
 
                 view = new MapView({
                   container: "viewDiv",
@@ -581,31 +701,25 @@ jobs:
                     targetPos = next;
                     displayPos = next;
                     lastAccepted = next;
+
+                    lastTrackPoint = next;
                     trackPaths = [[[lon, lat]]];
+
                     moveMap(lon, lat, true);
                   } else {
                     const jump = roughDistanceMeters(lastAccepted.lat, lastAccepted.lon, lat, lon);
 
-                    if (jump > 90) {
+                    if (jump > 80) {
+                      targetPos = next;
+                      lastAccepted = next;
+                      lastTrackPoint = next;
                       trackPaths.push([[lon, lat]]);
-                    } else if (jump >= 1.8) {
-                      const current = trackPaths[trackPaths.length - 1];
-                      current.push([lon, lat]);
-                      totalTrackMeters += jump;
+                      setGpsStatus("GPS-hopp delat · " + Math.round(jump) + " m", "warn");
+                      return;
                     }
 
-                    if (jump >= 2.5) {
-                      let heading = null;
-
-                      if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && speedKmh >= 3) {
-                        heading = gpsHeading;
-                      } else {
-                        heading = bearingDegrees(lastAccepted.lat, lastAccepted.lon, lat, lon);
-                      }
-
-                      lastHeadingDeg = hasHeading ? smoothAngle(lastHeadingDeg, heading, 0.35) : heading;
-                      hasHeading = true;
-                    }
+                    updateHeading(pos, jump, next);
+                    updateTrack(next, acc, jump);
 
                     targetPos = next;
                     lastAccepted = next;
@@ -617,8 +731,10 @@ jobs:
 
                   if (acc <= 25) {
                     setGpsStatus(acc + " m · " + speedKmh.toFixed(1) + " km/h", "ok");
-                  } else {
+                  } else if (acc <= 60) {
                     setGpsStatus(acc + " m · " + speedKmh.toFixed(1) + " km/h", "warn");
+                  } else {
+                    setGpsStatus(acc + " m · låg precision", "warn");
                   }
                 }, function(error) {
                   setGpsStatus(error.message, "bad");
@@ -629,27 +745,73 @@ jobs:
                 });
               }
 
+              function updateHeading(pos, distanceMeters, next) {
+                const gpsHeading = Number(pos.coords.heading);
+                let chosen = null;
+
+                if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && lastSpeedKmh >= 2.5) {
+                  chosen = gpsHeading;
+                } else if (distanceMeters >= 2.0 && lastAccepted) {
+                  chosen = bearingDegrees(lastAccepted.lat, lastAccepted.lon, next.lat, next.lon);
+                }
+
+                if (chosen !== null) {
+                  courseHeadingDeg = hasCourseHeading
+                    ? smoothAngle(courseHeadingDeg, chosen, 0.65)
+                    : chosen;
+                  hasCourseHeading = true;
+                }
+              }
+
+              function updateTrack(next, acc, distanceMeters) {
+                if (acc > 45) return;
+
+                if (!lastTrackPoint) {
+                  lastTrackPoint = next;
+                  if (!trackPaths.length) {
+                    trackPaths.push([[next.lon, next.lat]]);
+                  }
+                  return;
+                }
+
+                const d = roughDistanceMeters(lastTrackPoint.lat, lastTrackPoint.lon, next.lat, next.lon);
+
+                if (d > 40 || distanceMeters > 50) {
+                  trackPaths.push([[next.lon, next.lat]]);
+                  lastTrackPoint = next;
+                  return;
+                }
+
+                if (d >= 1.5) {
+                  const current = trackPaths[trackPaths.length - 1] || [];
+                  if (!trackPaths.length) trackPaths.push(current);
+
+                  current.push([next.lon, next.lat]);
+                  totalTrackMeters += d;
+                  lastTrackPoint = next;
+
+                  if (current.length > 4000) current.shift();
+                  if (trackPaths.length > 30) trackPaths.shift();
+                }
+              }
+
               function moveMap(lon, lat, force) {
                 if (!view) return;
 
                 const now = performance.now();
-
-                if (!force && now - lastFollowAt < 750) {
-                  return;
-                }
-
+                if (!force && now - lastFollowAt < 300) return;
                 lastFollowAt = now;
 
                 const target = {
                   center: [lon, lat]
                 };
 
-                if (followGps && hasHeading && lastSpeedKmh >= 2.5) {
-                  target.rotation = normalizeDeg(360 - lastHeadingDeg);
+                if (followGps && hasCourseHeading && lastSpeedKmh >= 2.0) {
+                  target.rotation = normalizeDeg(360 - courseHeadingDeg);
                 }
 
                 view.goTo(target, {
-                  duration: force ? 350 : 650,
+                  duration: force ? 220 : 280,
                   easing: "linear"
                 }).catch(function(){});
               }
@@ -657,19 +819,23 @@ jobs:
               function loop() {
                 if (targetPos && displayPos && view && window.__ArcGIS) {
                   displayPos = {
-                    lon: lerp(displayPos.lon, targetPos.lon, 0.18),
-                    lat: lerp(displayPos.lat, targetPos.lat, 0.18)
+                    lon: lerp(displayPos.lon, targetPos.lon, 0.28),
+                    lat: lerp(displayPos.lat, targetPos.lat, 0.28)
                   };
 
                   drawTrack();
                   drawGpsOverlay(displayPos.lon, displayPos.lat);
+
+                  if (followGps) {
+                    moveMap(displayPos.lon, displayPos.lat, false);
+                  }
                 }
 
                 requestAnimationFrame(loop);
               }
 
               function drawTrack() {
-                if (!trackLayer || !window.__ArcGIS) return;
+                if (!view || !window.__ArcGIS) return;
 
                 const Graphic = window.__ArcGIS.Graphic;
                 const Polyline = window.__ArcGIS.Polyline;
@@ -678,40 +844,63 @@ jobs:
                   return p.length >= 2;
                 });
 
-                trackLayer.removeAll();
-
-                if (totalTrackMeters < 8 || paths.length === 0) {
-                  return;
-                }
+                const visible = totalTrackMeters >= 2 && paths.length > 0;
 
                 const geometry = new Polyline({
-                  paths: paths,
+                  paths: visible ? paths : [[[0,0],[0,0]]],
                   spatialReference: { wkid: 4326 }
                 });
 
-                const halo = new Graphic({
-                  geometry: geometry,
-                  symbol: {
+                if (!trackHaloGraphic) {
+                  trackHaloGraphic = new Graphic({
+                    geometry: geometry,
+                    symbol: {
+                      type: "simple-line",
+                      color: [255, 255, 255, visible ? 0.96 : 0],
+                      width: 8,
+                      cap: "round",
+                      join: "round"
+                    }
+                  });
+
+                  trackLineGraphic = new Graphic({
+                    geometry: geometry,
+                    symbol: {
+                      type: "simple-line",
+                      color: [26, 115, 232, visible ? 1 : 0],
+                      width: 4,
+                      cap: "round",
+                      join: "round"
+                    }
+                  });
+
+                  view.graphics.addMany([trackHaloGraphic, trackLineGraphic]);
+                } else {
+                  trackHaloGraphic.geometry = geometry;
+                  trackLineGraphic.geometry = geometry;
+
+                  trackHaloGraphic.symbol = {
                     type: "simple-line",
-                    color: [255, 255, 255, 0.85],
-                    width: 5,
+                    color: [255, 255, 255, visible ? 0.96 : 0],
+                    width: 8,
                     cap: "round",
                     join: "round"
-                  }
-                });
+                  };
 
-                const line = new Graphic({
-                  geometry: geometry,
-                  symbol: {
+                  trackLineGraphic.symbol = {
                     type: "simple-line",
-                    color: [26, 115, 232, 0.96],
-                    width: 2.5,
+                    color: [26, 115, 232, visible ? 1 : 0],
+                    width: 4,
                     cap: "round",
                     join: "round"
-                  }
-                });
+                  };
 
-                trackLayer.addMany([halo, line]);
+                  try {
+                    const n = view.graphics.length || 0;
+                    view.graphics.reorder(trackHaloGraphic, Math.max(0, n - 2));
+                    view.graphics.reorder(trackLineGraphic, Math.max(0, n - 1));
+                  } catch(e) {}
+                }
               }
 
               function drawGpsOverlay(lon, lat) {
@@ -734,14 +923,37 @@ jobs:
                 accuracyDom.style.width = (radiusPx * 2) + "px";
                 accuracyDom.style.height = (radiusPx * 2) + "px";
 
-                if (hasHeading && lastSpeedKmh >= 1.5) {
-                  markerRotator.classList.add("hasHeading");
-                } else {
-                  markerRotator.classList.remove("hasHeading");
+                let visualHeading = null;
+
+                if (lastSpeedKmh >= 2.0 && hasCourseHeading) {
+                  visualHeading = courseHeadingDeg;
+                } else if (deviceHeadingDeg !== null) {
+                  visualHeading = deviceHeadingDeg;
+                } else if (hasCourseHeading) {
+                  visualHeading = courseHeadingDeg;
                 }
 
-                const screenHeading = normalizeDeg(lastHeadingDeg + (view.rotation || 0));
-                markerRotator.style.transform = "translate(-50%, -50%) rotate(" + screenHeading + "deg)";
+                if (visualHeading !== null) {
+                  markerRotator.classList.add("hasHeading");
+                  const screenHeading = normalizeDeg(visualHeading + (view.rotation || 0));
+                  markerRotator.style.transform = "translate(-50%, -50%) rotate(" + screenHeading + "deg)";
+                } else {
+                  markerRotator.classList.remove("hasHeading");
+                  markerRotator.style.transform = "translate(-50%, -50%) rotate(0deg)";
+                }
+              }
+
+              function readNativeHeading() {
+                try {
+                  if (typeof AndroidSensors !== "undefined" && AndroidSensors.getHeading) {
+                    const h = Number(AndroidSensors.getHeading());
+                    if (Number.isFinite(h) && h >= 0) {
+                      deviceHeadingDeg = deviceHeadingDeg === null
+                        ? h
+                        : smoothAngle(deviceHeadingDeg, h, 0.18);
+                    }
+                  }
+                } catch(e) {}
               }
 
               function getMetersPerPixel(lon, lat) {
