@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 8
-                  versionName 'GPS-FOLLOW-TRACKUP-1.7'
+                  versionCode 9
+                  versionName 'GPS-FOLLOW-TRACKUP-1.8'
               }
           }
           EOF
@@ -591,6 +591,8 @@ jobs:
               let totalTrackMeters = 0;
 
               let lastFollowAt = 0;
+              let lastLayerBreathAt = 0;
+              let lastViewUpdating = false;
 
               function setMapStatus(text, cls) {
                 mapStatus.innerHTML = "Karta: <span class='" + cls + "'>" + text + "</span>";
@@ -618,6 +620,7 @@ jobs:
 
                 if (followGps && displayPos) {
                   lastFollowAt = 0;
+                  lastLayerBreathAt = 0;
                   moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
@@ -666,6 +669,13 @@ jobs:
                   }
                 });
 
+                view.watch("updating", function(value) {
+                  lastViewUpdating = value;
+                  if (!value) {
+                    lastLayerBreathAt = performance.now();
+                  }
+                });
+
                 window.__ArcGIS = { Graphic, Polyline, Point };
 
                 view.when(function() {
@@ -688,7 +698,6 @@ jobs:
                   const lat = pos.coords.latitude;
                   const acc = Math.round(pos.coords.accuracy || 0);
                   const speedKmh = pos.coords.speed ? pos.coords.speed * 3.6 : 0;
-                  const gpsHeading = Number(pos.coords.heading);
 
                   if (acc > 100) {
                     setGpsStatus("svag precision · " + acc + " m", "warn");
@@ -803,6 +812,12 @@ jobs:
                 const now = performance.now();
 
                 if (!force && now - lastFollowAt < 250) {
+                  return;
+                }
+
+                if (!force && followGps && lastViewUpdating && now - lastLayerBreathAt > 900) {
+                  lastLayerBreathAt = now;
+                  lastFollowAt = now;
                   return;
                 }
 
