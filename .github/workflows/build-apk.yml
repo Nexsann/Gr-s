@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 11
-                  versionName 'GPS-FOLLOW-TRACKUP-1.10'
+                  versionCode 12
+                  versionName 'GPS-FOLLOW-TRACKUP-1.11'
               }
           }
           EOF
@@ -412,6 +412,44 @@ jobs:
                 margin-bottom: 2px;
               }
 
+              #searchBox {
+                position: absolute;
+                top: 88px;
+                left: 10px;
+                right: 92px;
+                z-index: 130;
+                display: flex;
+                gap: 6px;
+                background: rgba(18, 24, 33, 0.82);
+                padding: 7px;
+                border-radius: 14px;
+                box-shadow: 0 6px 18px rgba(0,0,0,0.22);
+              }
+
+              #searchInput {
+                flex: 1;
+                min-width: 0;
+                border: 0;
+                outline: 0;
+                border-radius: 11px;
+                height: 36px;
+                padding: 0 10px;
+                font-size: 15px;
+                font-weight: 800;
+                background: rgba(255,255,255,0.96);
+                color: #111827;
+              }
+
+              #searchBtn {
+                min-width: 58px;
+                height: 36px;
+                border-radius: 11px;
+                box-shadow: none;
+                background: #1a73e8;
+                color: white;
+                border-color: rgba(255,255,255,0.20);
+              }
+
               .ok { color: #8df7aa; font-weight: 800; }
               .warn { color: #ffd166; font-weight: 800; }
               .bad { color: #ff8585; font-weight: 800; }
@@ -542,6 +580,12 @@ jobs:
               <div id="mapStatus">Karta: laddar...</div>
               <div id="gpsStatus">GPS: väntar...</div>
               <div id="followStatus">Följ: laddar område</div>
+              <div id="searchStatus">Sök: redo</div>
+            </div>
+
+            <div id="searchBox">
+              <input id="searchInput" type="text" inputmode="numeric" placeholder="Sök nummer..." />
+              <button id="searchBtn">SÖK</button>
             </div>
 
             <div id="buttons">
@@ -561,8 +605,11 @@ jobs:
               const mapStatus = document.getElementById("mapStatus");
               const gpsStatus = document.getElementById("gpsStatus");
               const followStatus = document.getElementById("followStatus");
+              const searchStatus = document.getElementById("searchStatus");
               const followBtn = document.getElementById("followBtn");
               const centerBtn = document.getElementById("centerBtn");
+              const searchInput = document.getElementById("searchInput");
+              const searchBtn = document.getElementById("searchBtn");
               const gpsOverlay = document.getElementById("gpsOverlay");
               const accuracyDom = document.getElementById("accuracyDom");
               const markerRotator = document.getElementById("markerRotator");
@@ -571,6 +618,7 @@ jobs:
 
               let trackHaloGraphic = null;
               let trackLineGraphic = null;
+              let searchGraphic = null;
 
               let followGps = true;
 
@@ -593,12 +641,19 @@ jobs:
               let lastFollowAt = 0;
               let preloadUntil = 0;
 
+              let searchableLayers = [];
+              let searchLayersLoaded = false;
+
               function setMapStatus(text, cls) {
                 mapStatus.innerHTML = "Karta: <span class='" + cls + "'>" + text + "</span>";
               }
 
               function setGpsStatus(text, cls) {
                 gpsStatus.innerHTML = "GPS: <span class='" + cls + "'>" + text + "</span>";
+              }
+
+              function setSearchStatus(text, cls) {
+                searchStatus.innerHTML = "Sök: <span class='" + cls + "'>" + text + "</span>";
               }
 
               function updateFollowUi() {
@@ -645,6 +700,17 @@ jobs:
                 }
               };
 
+              searchBtn.onclick = function() {
+                doSearch();
+              };
+
+              searchInput.addEventListener("keydown", function(e) {
+                if (e.key === "Enter") {
+                  doSearch();
+                  searchInput.blur();
+                }
+              });
+
               updateFollowUi();
 
               window.addEventListener("error", function(e) {
@@ -659,8 +725,9 @@ jobs:
                 "esri/views/MapView",
                 "esri/Graphic",
                 "esri/geometry/Polyline",
-                "esri/geometry/Point"
-              ], function(esriConfig, WebMap, MapView, Graphic, Polyline, Point) {
+                "esri/geometry/Point",
+                "esri/layers/FeatureLayer"
+              ], function(esriConfig, WebMap, MapView, Graphic, Polyline, Point, FeatureLayer) {
                 esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
 
                 const webmap = new WebMap({
@@ -682,16 +749,346 @@ jobs:
                   }
                 });
 
-                window.__ArcGIS = { Graphic, Polyline, Point };
+                window.__ArcGIS = { Graphic, Polyline, Point, FeatureLayer };
 
                 view.when(function() {
                   setMapStatus("laddad", "ok");
+                  prepareSearchLayers();
                   startGps();
                   requestAnimationFrame(loop);
                 }).catch(function(error) {
                   setMapStatus("fel: " + error.message, "bad");
                 });
               });
+
+              async function prepareSearchLayers() {
+                try {
+                  setSearchStatus("läser lager", "warn");
+                  searchableLayers = [];
+
+                  const layers = [];
+                  view.map.allLayers.forEach(function(layer) {
+                    layers.push(layer);
+                  });
+
+                  for (const layer of layers) {
+                    await addQueryableLayer(layer);
+                  }
+
+                  searchLayersLoaded = true;
+
+                  if (searchableLayers.length > 0) {
+                    setSearchStatus(searchableLayers.length + " lager redo", "ok");
+                  } else {
+                    setSearchStatus("inga sökbara lager", "warn");
+                  }
+                } catch(e) {
+                  searchLayersLoaded = false;
+                  setSearchStatus("lagerfel", "bad");
+                }
+              }
+
+              async function addQueryableLayer(layer) {
+                try {
+                  if (!layer) return;
+
+                  if (layer.load) {
+                    try { await layer.load(); } catch(e) {}
+                  }
+
+                  if (layer.type === "feature" && layer.createQuery && layer.queryFeatures) {
+                    searchableLayers.push({
+                      title: layer.title || "FeatureLayer",
+                      layer: layer
+                    });
+                    return;
+                  }
+
+                  if (layer.type === "map-image" && layer.sublayers) {
+                    const sublayers = [];
+                    layer.sublayers.forEach(function(s) {
+                      sublayers.push(s);
+                    });
+
+                    for (const sub of sublayers) {
+                      await addQueryableSublayer(sub, layer.title || "MapImageLayer");
+                    }
+                  }
+                } catch(e) {}
+              }
+
+              async function addQueryableSublayer(sub, parentTitle) {
+                try {
+                  if (!sub) return;
+
+                  if (sub.sublayers) {
+                    const children = [];
+                    sub.sublayers.forEach(function(child) {
+                      children.push(child);
+                    });
+
+                    for (const child of children) {
+                      await addQueryableSublayer(child, parentTitle);
+                    }
+                  }
+
+                  if (sub.createFeatureLayer) {
+                    const fl = sub.createFeatureLayer();
+                    try { await fl.load(); } catch(e) {}
+
+                    if (fl && fl.createQuery && fl.queryFeatures && fl.fields && fl.fields.length) {
+                      searchableLayers.push({
+                        title: parentTitle + " / " + (sub.title || fl.title || "Sublayer"),
+                        layer: fl
+                      });
+                    }
+                  }
+                } catch(e) {}
+              }
+
+              async function doSearch() {
+                const raw = (searchInput.value || "").trim();
+
+                if (!raw) {
+                  setSearchStatus("skriv nummer", "warn");
+                  return;
+                }
+
+                const clean = raw.replace(/[^0-9A-Za-zÅÄÖåäö_-]/g, "");
+
+                if (!clean) {
+                  setSearchStatus("ogiltigt nummer", "bad");
+                  return;
+                }
+
+                try {
+                  searchBtn.disabled = true;
+                  setSearchStatus("söker " + clean, "warn");
+
+                  if (!searchLayersLoaded || searchableLayers.length === 0) {
+                    await prepareSearchLayers();
+                  }
+
+                  const result = await searchNumberInLayers(clean);
+
+                  if (!result) {
+                    setSearchStatus("ingen träff " + clean, "bad");
+                    return;
+                  }
+
+                  followGps = false;
+                  preloadUntil = 0;
+                  updateFollowUi();
+
+                  markAndGoToResult(result.feature, clean);
+
+                  setSearchStatus("hittade " + clean, "ok");
+                } catch(e) {
+                  setSearchStatus("sökfel", "bad");
+                } finally {
+                  searchBtn.disabled = false;
+                }
+              }
+
+              async function searchNumberInLayers(value) {
+                const ordered = searchableLayers.slice().sort(function(a, b) {
+                  return scoreLayerTitle(b.title) - scoreLayerTitle(a.title);
+                });
+
+                for (const item of ordered) {
+                  const layer = item.layer;
+                  if (!layer || !layer.fields) continue;
+
+                  const wheres = buildWhereBatches(layer.fields, value);
+
+                  for (const where of wheres) {
+                    try {
+                      const q = layer.createQuery();
+                      q.where = where;
+                      q.outFields = ["*"];
+                      q.returnGeometry = true;
+                      q.num = 5;
+
+                      const res = await layer.queryFeatures(q);
+
+                      if (res && res.features && res.features.length > 0) {
+                        return {
+                          layer: layer,
+                          feature: res.features[0],
+                          title: item.title
+                        };
+                      }
+                    } catch(e) {}
+                  }
+                }
+
+                return null;
+              }
+
+              function scoreLayerTitle(title) {
+                const t = String(title || "").toLowerCase();
+                let score = 0;
+
+                if (t.includes("skötsel")) score += 20;
+                if (t.includes("skotsel")) score += 20;
+                if (t.includes("gräs")) score += 20;
+                if (t.includes("gras")) score += 20;
+                if (t.includes("yta")) score += 10;
+                if (t.includes("park")) score += 4;
+
+                return score;
+              }
+
+              function buildWhereBatches(fields, value) {
+                const safe = String(value).replace(/'/g, "''");
+                const num = Number(value);
+                const isNumericSearch = Number.isFinite(num) && String(value).match(/^[0-9]+$/);
+
+                const preferredNames = [
+                  "NUMMER", "NR", "ID", "OBJECTID", "FID",
+                  "YTA", "YTANR", "YTA_NR", "YTAID", "YTA_ID",
+                  "SKOTSEL", "SKOTSELYTA", "SKOTSELYTA_ID",
+                  "SKÖTSEL", "SKÖTSELYTA", "SKÖTSELYTA_ID",
+                  "NAMN", "NAME", "LABEL", "TEXT", "KOD", "CODE"
+                ];
+
+                const usable = fields.filter(function(f) {
+                  if (!f || !f.name || !f.type) return false;
+                  if (f.type === "geometry" || f.type === "blob" || f.type === "raster" || f.type === "date") return false;
+                  return true;
+                });
+
+                usable.sort(function(a, b) {
+                  return fieldScore(b.name, preferredNames) - fieldScore(a.name, preferredNames);
+                });
+
+                const numericParts = [];
+                const exactTextParts = [];
+                const likeTextParts = [];
+
+                usable.slice(0, 30).forEach(function(f) {
+                  const name = f.name;
+
+                  if (isNumericSearch && isNumberField(f.type)) {
+                    numericParts.push(name + " = " + num);
+                  }
+
+                  if (isTextField(f.type)) {
+                    exactTextParts.push(name + " = '" + safe + "'");
+                    likeTextParts.push(name + " LIKE '%" + safe + "%'");
+                  }
+                });
+
+                const batches = [];
+
+                if (numericParts.length) {
+                  batches.push(chunkOr(numericParts, 8));
+                }
+
+                if (exactTextParts.length) {
+                  batches.push(chunkOr(exactTextParts, 8));
+                }
+
+                if (likeTextParts.length) {
+                  batches.push(chunkOr(likeTextParts, 6));
+                }
+
+                return batches.flat().filter(Boolean);
+              }
+
+              function fieldScore(name, preferredNames) {
+                const n = String(name || "").toUpperCase();
+                let score = 0;
+
+                preferredNames.forEach(function(p, i) {
+                  if (n === p) score += 100 - i;
+                  else if (n.includes(p)) score += 40 - Math.min(i, 30);
+                });
+
+                return score;
+              }
+
+              function isNumberField(type) {
+                return [
+                  "oid",
+                  "integer",
+                  "small-integer",
+                  "single",
+                  "double",
+                  "long"
+                ].includes(type);
+              }
+
+              function isTextField(type) {
+                return type === "string" || type === "guid" || type === "global-id";
+              }
+
+              function chunkOr(parts, size) {
+                const chunks = [];
+                for (let i = 0; i < parts.length; i += size) {
+                  chunks.push(parts.slice(i, i + size).join(" OR "));
+                }
+                return chunks;
+              }
+
+              function markAndGoToResult(feature, value) {
+                if (!view || !feature || !feature.geometry || !window.__ArcGIS) return;
+
+                const Graphic = window.__ArcGIS.Graphic;
+                const geom = feature.geometry;
+
+                if (searchGraphic) {
+                  try { view.graphics.remove(searchGraphic); } catch(e) {}
+                  searchGraphic = null;
+                }
+
+                let symbol;
+
+                if (geom.type === "polygon") {
+                  symbol = {
+                    type: "simple-fill",
+                    color: [255, 193, 7, 0.18],
+                    outline: {
+                      color: [255, 64, 0, 1],
+                      width: 4
+                    }
+                  };
+                } else if (geom.type === "polyline") {
+                  symbol = {
+                    type: "simple-line",
+                    color: [255, 64, 0, 1],
+                    width: 5
+                  };
+                } else {
+                  symbol = {
+                    type: "simple-marker",
+                    color: [255, 64, 0, 1],
+                    outline: {
+                      color: [255, 255, 255, 1],
+                      width: 2
+                    },
+                    size: 18
+                  };
+                }
+
+                searchGraphic = new Graphic({
+                  geometry: geom,
+                  symbol: symbol
+                });
+
+                view.graphics.add(searchGraphic);
+
+                let target = geom;
+
+                if (geom.extent) {
+                  target = geom.extent.expand(2.4);
+                }
+
+                view.goTo(target, {
+                  duration: 550,
+                  easing: "ease-in-out"
+                }).catch(function(){});
+              }
 
               function startGps() {
                 if (!navigator.geolocation) {
