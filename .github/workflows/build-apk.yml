@@ -1,4 +1,4 @@
-name: Build Skötselytor GPS TRACKUP APK
+name: Build Skotselytor GPS APK
 
 on:
   workflow_dispatch:
@@ -26,11 +26,11 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create Android WebView GPS TrackUp project
+      - name: Create Android project
         run: |
           rm -rf app build.gradle settings.gradle
 
-          mkdir -p app/src/main/java/se/skotselytor/gpssmooth
+          mkdir -p app/src/main/java/se/skotselytor/gps
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
 
@@ -51,7 +51,7 @@ jobs:
               }
           }
 
-          rootProject.name = 'SkotselytorGpsTrackUp'
+          rootProject.name = 'SkotselytorGps'
           include ':app'
           EOF
 
@@ -67,15 +67,15 @@ jobs:
           }
 
           android {
-              namespace 'se.skotselytor.gpssmooth'
+              namespace 'se.skotselytor.gps'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'se.skotselytor.gpssmooth'
+                  applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 5
-                  versionName 'GPS-TRACKUP-1.4'
+                  versionCode 6
+                  versionName 'GPS-TRACKUP-1.5'
               }
           }
           EOF
@@ -124,8 +124,8 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/gpssmooth/MainActivity.java <<'EOF'
-          package se.skotselytor.gpssmooth;
+          cat > app/src/main/java/se/skotselytor/gps/MainActivity.java <<'EOF'
+          package se.skotselytor.gps;
 
           import android.Manifest;
           import android.app.Activity;
@@ -136,12 +136,12 @@ jobs:
           import android.view.View;
           import android.view.Window;
           import android.view.WindowManager;
+          import android.webkit.ConsoleMessage;
+          import android.webkit.GeolocationPermissions;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
-          import android.webkit.GeolocationPermissions;
-          import android.webkit.ConsoleMessage;
 
           public class MainActivity extends Activity {
               private WebView webView;
@@ -204,6 +204,20 @@ jobs:
                   webView.loadUrl("file:///android_asset/index.html");
               }
 
+              private void requestLocationPermissionIfNeeded() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(
+                              new String[] {
+                                  Manifest.permission.ACCESS_FINE_LOCATION,
+                                  Manifest.permission.ACCESS_COARSE_LOCATION
+                              },
+                              LOCATION_REQUEST
+                          );
+                      }
+                  }
+              }
+
               private void preferHighestRefreshRate() {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                       try {
@@ -226,20 +240,6 @@ jobs:
                               getWindow().setAttributes(attrs);
                           }
                       } catch (Throwable ignored) {}
-                  }
-              }
-
-              private void requestLocationPermissionIfNeeded() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(
-                              new String[]{
-                                  Manifest.permission.ACCESS_FINE_LOCATION,
-                                  Manifest.permission.ACCESS_COARSE_LOCATION
-                              },
-                              LOCATION_REQUEST
-                          );
-                      }
                   }
               }
 
@@ -282,16 +282,15 @@ jobs:
                 top: 10px;
                 left: 10px;
                 z-index: 100;
-                background: rgba(20, 24, 32, 0.78);
+                background: rgba(18, 24, 33, 0.82);
                 color: white;
                 padding: 8px 10px;
                 border-radius: 14px;
                 font-size: 12px;
-                line-height: 1.22;
+                line-height: 1.25;
                 box-shadow: 0 6px 18px rgba(0,0,0,0.22);
                 pointer-events: none;
-                max-width: 245px;
-                backdrop-filter: blur(10px);
+                max-width: 250px;
               }
 
               #panel .title {
@@ -300,9 +299,9 @@ jobs:
                 margin-bottom: 2px;
               }
 
-              .ok { color: #90f7ad; font-weight: 800; }
-              .bad { color: #ff8585; font-weight: 800; }
+              .ok { color: #8df7aa; font-weight: 800; }
               .warn { color: #ffd166; font-weight: 800; }
+              .bad { color: #ff8585; font-weight: 800; }
 
               #buttons {
                 position: absolute;
@@ -315,7 +314,7 @@ jobs:
               }
 
               button {
-                border: 1px solid rgba(0,0,0,0.10);
+                border: 1px solid rgba(0,0,0,0.12);
                 border-radius: 16px;
                 min-width: 72px;
                 height: 42px;
@@ -330,7 +329,7 @@ jobs:
               button.active {
                 background: #1a73e8;
                 color: white;
-                border-color: rgba(255,255,255,0.28);
+                border-color: rgba(255,255,255,0.25);
               }
 
               #gpsOverlay {
@@ -352,7 +351,7 @@ jobs:
                 width: 40px;
                 height: 40px;
                 border-radius: 9999px;
-                background: rgba(26, 115, 232, 0.065);
+                background: rgba(26, 115, 232, 0.06);
                 border: 1px solid rgba(26, 115, 232, 0.22);
                 transform: translate(-50%, -50%);
               }
@@ -365,7 +364,6 @@ jobs:
                 height: 34px;
                 transform: translate(-50%, -50%);
                 transform-origin: 50% 50%;
-                will-change: transform;
               }
 
               #headingCone {
@@ -457,42 +455,27 @@ jobs:
               const markerRotator = document.getElementById("markerRotator");
 
               let view;
-              let trackHaloGraphic;
-              let trackGraphic;
-
+              let trackLayer;
               let followGps = true;
-              let pendingFollow = null;
 
-              let lastRaw = null;
               let displayPos = null;
-              let animFrom = null;
-              let animTo = null;
-              let animStart = 0;
-              let animDuration = 600;
-
-              let lastAccuracy = 0;
-              let lastSpeedKmh = 0;
-
+              let targetPos = null;
+              let lastAccepted = null;
               let lastHeadingDeg = 0;
               let hasHeading = false;
-
-              let lastMovementHeadingDeg = 0;
-              let hasMovementHeading = false;
-
-              let deviceHeadingDeg = null;
+              let lastSpeedKmh = 0;
+              let lastAccuracy = 0;
 
               let trackPaths = [];
-              let trackingStarted = false;
-              let stableFixes = 0;
-              let cumulativeTrackMeters = 0;
-              let firstGoodFixReceived = false;
+              let totalTrackMeters = 0;
+              let lastFollowAt = 0;
 
               function setMapStatus(text, cls) {
-                mapStatus.innerHTML = "Karta: <span class='" + (cls || "") + "'>" + text + "</span>";
+                mapStatus.innerHTML = "Karta: <span class='" + cls + "'>" + text + "</span>";
               }
 
               function setGpsStatus(text, cls) {
-                gpsStatus.innerHTML = "GPS: <span class='" + (cls || "") + "'>" + text + "</span>";
+                gpsStatus.innerHTML = "GPS: <span class='" + cls + "'>" + text + "</span>";
               }
 
               function updateFollowUi() {
@@ -512,19 +495,338 @@ jobs:
                 updateFollowUi();
 
                 if (followGps && displayPos) {
-                  followMapTo(displayPos.lon, displayPos.lat, true);
+                  moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
 
               centerBtn.onclick = function() {
-                if (displayPos && view) {
-                  followMapTo(displayPos.lon, displayPos.lat, true);
+                if (displayPos) {
+                  moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
 
               updateFollowUi();
-              startCompass();
 
               window.addEventListener("error", function(e) {
-                setMapStatus("JavaScript-fel: " + e.message, "bad");
+                setMapStatus("JS-fel: " + e.message, "bad");
               });
+
+              require([
+                "esri/config",
+                "esri/WebMap",
+                "esri/views/MapView",
+                "esri/Graphic",
+                "esri/layers/GraphicsLayer",
+                "esri/geometry/Polyline",
+                "esri/geometry/Point"
+              ], function(esriConfig, WebMap, MapView, Graphic, GraphicsLayer, Polyline, Point) {
+                esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
+
+                const webmap = new WebMap({
+                  portalItem: {
+                    id: "4811ba982b9e4a97b01cf4353224374b"
+                  }
+                });
+
+                trackLayer = new GraphicsLayer({ title: "GPS-spår" });
+                webmap.add(trackLayer);
+
+                view = new MapView({
+                  container: "viewDiv",
+                  map: webmap,
+                  center: [15.6214, 58.4108],
+                  zoom: 12,
+                  constraints: {
+                    rotationEnabled: true
+                  },
+                  ui: {
+                    components: ["zoom", "attribution"]
+                  }
+                });
+
+                window.__ArcGIS = { Graphic, Polyline, Point };
+
+                view.when(function() {
+                  setMapStatus("laddad", "ok");
+                  startGps();
+                  requestAnimationFrame(loop);
+                }).catch(function(error) {
+                  setMapStatus("fel: " + error.message, "bad");
+                });
+              });
+
+              function startGps() {
+                if (!navigator.geolocation) {
+                  setGpsStatus("stöds inte", "bad");
+                  return;
+                }
+
+                navigator.geolocation.watchPosition(function(pos) {
+                  const lon = pos.coords.longitude;
+                  const lat = pos.coords.latitude;
+                  const acc = Math.round(pos.coords.accuracy || 0);
+                  const speedKmh = pos.coords.speed ? pos.coords.speed * 3.6 : 0;
+                  const gpsHeading = Number(pos.coords.heading);
+
+                  if (acc > 100) {
+                    setGpsStatus("svag precision · " + acc + " m", "warn");
+                    return;
+                  }
+
+                  const next = { lon, lat };
+                  lastAccuracy = acc;
+                  lastSpeedKmh = speedKmh;
+
+                  if (!targetPos) {
+                    targetPos = next;
+                    displayPos = next;
+                    lastAccepted = next;
+                    trackPaths = [[[lon, lat]]];
+                    moveMap(lon, lat, true);
+                  } else {
+                    const jump = roughDistanceMeters(lastAccepted.lat, lastAccepted.lon, lat, lon);
+
+                    if (jump > 90) {
+                      trackPaths.push([[lon, lat]]);
+                    } else if (jump >= 1.8) {
+                      const current = trackPaths[trackPaths.length - 1];
+                      current.push([lon, lat]);
+                      totalTrackMeters += jump;
+                    }
+
+                    if (jump >= 2.5) {
+                      let heading = null;
+
+                      if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && speedKmh >= 3) {
+                        heading = gpsHeading;
+                      } else {
+                        heading = bearingDegrees(lastAccepted.lat, lastAccepted.lon, lat, lon);
+                      }
+
+                      lastHeadingDeg = hasHeading ? smoothAngle(lastHeadingDeg, heading, 0.35) : heading;
+                      hasHeading = true;
+                    }
+
+                    targetPos = next;
+                    lastAccepted = next;
+                  }
+
+                  if (followGps) {
+                    moveMap(lon, lat, false);
+                  }
+
+                  if (acc <= 25) {
+                    setGpsStatus(acc + " m · " + speedKmh.toFixed(1) + " km/h", "ok");
+                  } else {
+                    setGpsStatus(acc + " m · " + speedKmh.toFixed(1) + " km/h", "warn");
+                  }
+                }, function(error) {
+                  setGpsStatus(error.message, "bad");
+                }, {
+                  enableHighAccuracy: true,
+                  maximumAge: 500,
+                  timeout: 15000
+                });
+              }
+
+              function moveMap(lon, lat, force) {
+                if (!view) return;
+
+                const now = performance.now();
+
+                if (!force && now - lastFollowAt < 750) {
+                  return;
+                }
+
+                lastFollowAt = now;
+
+                const target = {
+                  center: [lon, lat]
+                };
+
+                if (followGps && hasHeading && lastSpeedKmh >= 2.5) {
+                  target.rotation = normalizeDeg(360 - lastHeadingDeg);
+                }
+
+                view.goTo(target, {
+                  duration: force ? 350 : 650,
+                  easing: "linear"
+                }).catch(function(){});
+              }
+
+              function loop() {
+                if (targetPos && displayPos && view && window.__ArcGIS) {
+                  displayPos = {
+                    lon: lerp(displayPos.lon, targetPos.lon, 0.18),
+                    lat: lerp(displayPos.lat, targetPos.lat, 0.18)
+                  };
+
+                  drawTrack();
+                  drawGpsOverlay(displayPos.lon, displayPos.lat);
+                }
+
+                requestAnimationFrame(loop);
+              }
+
+              function drawTrack() {
+                if (!trackLayer || !window.__ArcGIS) return;
+
+                const Graphic = window.__ArcGIS.Graphic;
+                const Polyline = window.__ArcGIS.Polyline;
+
+                const paths = trackPaths.filter(function(p) {
+                  return p.length >= 2;
+                });
+
+                trackLayer.removeAll();
+
+                if (totalTrackMeters < 8 || paths.length === 0) {
+                  return;
+                }
+
+                const geometry = new Polyline({
+                  paths: paths,
+                  spatialReference: { wkid: 4326 }
+                });
+
+                const halo = new Graphic({
+                  geometry: geometry,
+                  symbol: {
+                    type: "simple-line",
+                    color: [255, 255, 255, 0.85],
+                    width: 5,
+                    cap: "round",
+                    join: "round"
+                  }
+                });
+
+                const line = new Graphic({
+                  geometry: geometry,
+                  symbol: {
+                    type: "simple-line",
+                    color: [26, 115, 232, 0.96],
+                    width: 2.5,
+                    cap: "round",
+                    join: "round"
+                  }
+                });
+
+                trackLayer.addMany([halo, line]);
+              }
+
+              function drawGpsOverlay(lon, lat) {
+                const Point = window.__ArcGIS.Point;
+                const point = new Point({ longitude: lon, latitude: lat });
+                const screen = view.toScreen(point);
+
+                if (!screen || !Number.isFinite(screen.x) || !Number.isFinite(screen.y)) {
+                  gpsOverlay.style.display = "none";
+                  return;
+                }
+
+                gpsOverlay.style.display = "block";
+                gpsOverlay.style.transform = "translate(" + screen.x + "px, " + screen.y + "px)";
+
+                const metersPerPixel = getMetersPerPixel(lon, lat);
+                let radiusPx = lastAccuracy / metersPerPixel;
+                radiusPx = Math.max(16, Math.min(radiusPx, 55));
+
+                accuracyDom.style.width = (radiusPx * 2) + "px";
+                accuracyDom.style.height = (radiusPx * 2) + "px";
+
+                if (hasHeading && lastSpeedKmh >= 1.5) {
+                  markerRotator.classList.add("hasHeading");
+                } else {
+                  markerRotator.classList.remove("hasHeading");
+                }
+
+                const screenHeading = normalizeDeg(lastHeadingDeg + (view.rotation || 0));
+                markerRotator.style.transform = "translate(-50%, -50%) rotate(" + screenHeading + "deg)";
+              }
+
+              function getMetersPerPixel(lon, lat) {
+                try {
+                  const Point = window.__ArcGIS.Point;
+                  const p1 = new Point({ longitude: lon, latitude: lat });
+                  const p2coord = offsetMeters(lon, lat, 10, 0);
+                  const p2 = new Point({ longitude: p2coord.lon, latitude: p2coord.lat });
+
+                  const s1 = view.toScreen(p1);
+                  const s2 = view.toScreen(p2);
+
+                  const px = Math.hypot(s2.x - s1.x, s2.y - s1.y);
+                  if (px > 0.1) return 10 / px;
+                } catch(e) {}
+
+                return 1;
+              }
+
+              function offsetMeters(lon, lat, northMeters, eastMeters) {
+                const earth = 6378137;
+                const dLat = northMeters / earth;
+                const dLon = eastMeters / (earth * Math.cos(Math.PI * lat / 180));
+
+                return {
+                  lat: lat + dLat * 180 / Math.PI,
+                  lon: lon + dLon * 180 / Math.PI
+                };
+              }
+
+              function lerp(a, b, t) {
+                return a + (b - a) * t;
+              }
+
+              function normalizeDeg(deg) {
+                return ((deg % 360) + 360) % 360;
+              }
+
+              function smoothAngle(from, to, amount) {
+                const diff = ((to - from + 540) % 360) - 180;
+                return normalizeDeg(from + diff * amount);
+              }
+
+              function roughDistanceMeters(lat1, lon1, lat2, lon2) {
+                const R = 6371000;
+                const toRad = x => x * Math.PI / 180;
+                const dLat = toRad(lat2 - lat1);
+                const dLon = toRad(lon2 - lon1);
+                const a =
+                  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              }
+
+              function bearingDegrees(lat1, lon1, lat2, lon2) {
+                const toRad = x => x * Math.PI / 180;
+                const toDeg = x => x * 180 / Math.PI;
+
+                const phi1 = toRad(lat1);
+                const phi2 = toRad(lat2);
+                const deltaLon = toRad(lon2 - lon1);
+
+                const y = Math.sin(deltaLon) * Math.cos(phi2);
+                const x =
+                  Math.cos(phi1) * Math.sin(phi2) -
+                  Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLon);
+
+                return normalizeDeg(toDeg(Math.atan2(y, x)));
+              }
+            </script>
+          </body>
+          </html>
+          EOF
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug
+          echo "APK files:"
+          find app/build/outputs/apk -name "*.apk" -type f -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: skotselytor-gps-apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
