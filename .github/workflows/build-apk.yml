@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 7
-                  versionName 'GPS-FOLLOW-TRACKUP-1.6'
+                  versionCode 8
+                  versionName 'GPS-FOLLOW-TRACKUP-1.7'
               }
           }
           EOF
@@ -617,12 +617,14 @@ jobs:
                 updateFollowUi();
 
                 if (followGps && displayPos) {
+                  lastFollowAt = 0;
                   moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
 
               centerBtn.onclick = function() {
                 if (displayPos) {
+                  lastFollowAt = 0;
                   moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
@@ -799,7 +801,11 @@ jobs:
                 if (!view) return;
 
                 const now = performance.now();
-                if (!force && now - lastFollowAt < 300) return;
+
+                if (!force && now - lastFollowAt < 250) {
+                  return;
+                }
+
                 lastFollowAt = now;
 
                 const target = {
@@ -811,7 +817,7 @@ jobs:
                 }
 
                 view.goTo(target, {
-                  duration: force ? 220 : 280,
+                  duration: force ? 180 : 240,
                   easing: "linear"
                 }).catch(function(){});
               }
