@@ -1,4 +1,4 @@
-name: Build Skötselytor GPS MAP TEST APK
+name: Build Skötselytor GPS LIVE APK
 
 on:
   workflow_dispatch:
@@ -26,11 +26,11 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create Android WebView Map Test project
+      - name: Create Android WebView GPS Live project
         run: |
           rm -rf app build.gradle settings.gradle
 
-          mkdir -p app/src/main/java/se/skotselytor/gpsmaptest
+          mkdir -p app/src/main/java/se/skotselytor/gpslive
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
 
@@ -51,7 +51,7 @@ jobs:
               }
           }
 
-          rootProject.name = 'SkotselytorGpsMapTest'
+          rootProject.name = 'SkotselytorGpsLive'
           include ':app'
           EOF
 
@@ -67,22 +67,22 @@ jobs:
           }
 
           android {
-              namespace 'se.skotselytor.gpsmaptest'
+              namespace 'se.skotselytor.gpslive'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'se.skotselytor.gpsmaptest'
+                  applicationId 'se.skotselytor.gpslive'
                   minSdk 26
                   targetSdk 35
                   versionCode 1
-                  versionName 'MAP-TEST-1.0'
+                  versionName 'GPS-LIVE-1.0'
               }
           }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">Skötselytor Map Test</string>
+              <string name="app_name">Skötselytor GPS Live</string>
           </resources>
           EOF
 
@@ -98,10 +98,12 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor Map Test"
+                  android:label="Skötselytor GPS Live"
                   android:usesCleartextTraffic="true"
                   android:allowBackup="false"
                   android:supportsRtl="true">
@@ -118,11 +120,14 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/gpsmaptest/MainActivity.java <<'EOF'
-          package se.skotselytor.gpsmaptest;
+          cat > app/src/main/java/se/skotselytor/gpslive/MainActivity.java <<'EOF'
+          package se.skotselytor.gpslive;
 
+          import android.Manifest;
           import android.app.Activity;
           import android.os.Bundle;
+          import android.os.Build;
+          import android.content.pm.PackageManager;
           import android.view.View;
           import android.view.Window;
           import android.view.WindowManager;
@@ -130,10 +135,12 @@ jobs:
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import android.webkit.GeolocationPermissions;
           import android.webkit.ConsoleMessage;
 
           public class MainActivity extends Activity {
               private WebView webView;
+              private static final int LOCATION_REQUEST = 1001;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -154,6 +161,8 @@ jobs:
                       View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                   );
 
+                  requestLocationPermissionIfNeeded();
+
                   webView = new WebView(this);
                   setContentView(webView);
 
@@ -161,6 +170,7 @@ jobs:
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
+                  settings.setGeolocationEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
                   settings.setAllowFileAccessFromFileURLs(true);
@@ -172,12 +182,31 @@ jobs:
 
                   webView.setWebChromeClient(new WebChromeClient() {
                       @Override
+                      public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                          callback.invoke(origin, true, false);
+                      }
+
+                      @Override
                       public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
                           return true;
                       }
                   });
 
                   webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              private void requestLocationPermissionIfNeeded() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(
+                              new String[]{
+                                  Manifest.permission.ACCESS_FINE_LOCATION,
+                                  Manifest.permission.ACCESS_COARSE_LOCATION
+                              },
+                              LOCATION_REQUEST
+                          );
+                      }
+                  }
               }
 
               @Override
@@ -197,7 +226,7 @@ jobs:
           <head>
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-            <title>Skötselytor Map Test</title>
+            <title>Skötselytor GPS Live</title>
 
             <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
             <script src="https://js.arcgis.com/4.31/"></script>
@@ -213,7 +242,7 @@ jobs:
                 font-family: Arial, sans-serif;
               }
 
-              #status {
+              #panel {
                 position: absolute;
                 top: 12px;
                 left: 12px;
@@ -227,78 +256,255 @@ jobs:
                 box-shadow: 0 8px 24px rgba(0,0,0,0.35);
               }
 
-              .ok {
-                color: #7CFF9B;
+              #gpsBtn {
+                position: absolute;
+                right: 14px;
+                bottom: 26px;
+                z-index: 99;
+                border: none;
+                border-radius: 999px;
+                padding: 15px 18px;
+                font-size: 18px;
                 font-weight: bold;
+                background: #2ecc71;
+                color: #07110b;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
               }
 
-              .bad {
-                color: #FF7777;
-                font-weight: bold;
-              }
+              .ok { color: #7CFF9B; font-weight: bold; }
+              .bad { color: #FF7777; font-weight: bold; }
+              .warn { color: #FFD166; font-weight: bold; }
             </style>
           </head>
 
           <body>
             <div id="viewDiv"></div>
-            <div id="status">Laddar Skötselytor-kartan...</div>
+
+            <div id="panel">
+              <div><b>Skötselytor GPS Live</b></div>
+              <div id="mapStatus">Karta: laddar...</div>
+              <div id="gpsStatus">GPS: väntar...</div>
+            </div>
+
+            <button id="gpsBtn">GPS</button>
 
             <script>
-              const statusBox = document.getElementById("status");
+              const mapStatus = document.getElementById("mapStatus");
+              const gpsStatus = document.getElementById("gpsStatus");
+              const gpsBtn = document.getElementById("gpsBtn");
 
-              function setStatus(text, type) {
-                statusBox.innerHTML = text;
-                statusBox.className = type || "";
+              let view;
+              let gpsGraphic;
+              let accuracyGraphic;
+              let trackGraphic;
+              let followGps = true;
+              let lastPoint = null;
+              let trackPoints = [];
+
+              function setMapStatus(text, cls) {
+                mapStatus.innerHTML = "Karta: <span class='" + (cls || "") + "'>" + text + "</span>";
+              }
+
+              function setGpsStatus(text, cls) {
+                gpsStatus.innerHTML = "GPS: <span class='" + (cls || "") + "'>" + text + "</span>";
               }
 
               window.addEventListener("error", function(e) {
-                setStatus("JavaScript-fel:<br>" + e.message, "bad");
+                setMapStatus("JavaScript-fel: " + e.message, "bad");
               });
 
               window.addEventListener("unhandledrejection", function(e) {
-                setStatus("Laddningsfel:<br>" + e.reason, "bad");
+                setMapStatus("Laddningsfel: " + e.reason, "bad");
               });
 
-              try {
-                require([
-                  "esri/config",
-                  "esri/WebMap",
-                  "esri/views/MapView"
-                ], function(esriConfig, WebMap, MapView) {
-
-                  esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
-
-                  const webmap = new WebMap({
-                    portalItem: {
-                      id: "4811ba982b9e4a97b01cf4353224374b"
-                    }
+              gpsBtn.onclick = function() {
+                followGps = true;
+                if (lastPoint && view) {
+                  view.goTo({
+                    center: lastPoint,
+                    zoom: Math.max(view.zoom, 17)
+                  }, {
+                    duration: 500
                   });
+                }
+              };
 
-                  const view = new MapView({
-                    container: "viewDiv",
-                    map: webmap,
-                    center: [15.6214, 58.4108],
-                    zoom: 12,
-                    constraints: {
-                      rotationEnabled: true
-                    },
-                    ui: {
-                      components: ["zoom", "attribution"]
-                    }
-                  });
+              require([
+                "esri/config",
+                "esri/WebMap",
+                "esri/views/MapView",
+                "esri/Graphic",
+                "esri/layers/GraphicsLayer",
+                "esri/geometry/Point",
+                "esri/geometry/Circle",
+                "esri/geometry/Polyline"
+              ], function(esriConfig, WebMap, MapView, Graphic, GraphicsLayer, Point, Circle, Polyline) {
 
-                  view.when(function() {
-                    setStatus("Kartan laddad ✅<br>Ingen GPS eller bakgrundsspårning är aktiv.", "ok");
-                    setTimeout(function() {
-                      statusBox.style.display = "none";
-                    }, 3500);
-                  }).catch(function(error) {
-                    setStatus("Kartan kunde inte laddas:<br>" + error.message, "bad");
-                  });
+                esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
 
+                const gpsLayer = new GraphicsLayer({
+                  title: "GPS Live"
                 });
-              } catch (err) {
-                setStatus("Startfel:<br>" + err.message, "bad");
+
+                const webmap = new WebMap({
+                  portalItem: {
+                    id: "4811ba982b9e4a97b01cf4353224374b"
+                  }
+                });
+
+                webmap.add(gpsLayer);
+
+                view = new MapView({
+                  container: "viewDiv",
+                  map: webmap,
+                  center: [15.6214, 58.4108],
+                  zoom: 12,
+                  constraints: {
+                    rotationEnabled: true
+                  },
+                  ui: {
+                    components: ["zoom", "attribution"]
+                  }
+                });
+
+                view.when(function() {
+                  setMapStatus("laddad ✅", "ok");
+                  startGps(gpsLayer, Graphic, Point, Circle, Polyline);
+                }).catch(function(error) {
+                  setMapStatus("kunde inte laddas: " + error.message, "bad");
+                });
+              });
+
+              function startGps(gpsLayer, Graphic, Point, Circle, Polyline) {
+                if (!navigator.geolocation) {
+                  setGpsStatus("stöds inte i denna WebView", "bad");
+                  return;
+                }
+
+                setGpsStatus("startar...", "warn");
+
+                navigator.geolocation.watchPosition(function(pos) {
+                  const lon = pos.coords.longitude;
+                  const lat = pos.coords.latitude;
+                  const acc = Math.round(pos.coords.accuracy || 0);
+                  const heading = pos.coords.heading || 0;
+                  const speed = pos.coords.speed ? (pos.coords.speed * 3.6) : 0;
+
+                  const point = new Point({
+                    longitude: lon,
+                    latitude: lat
+                  });
+
+                  lastPoint = point;
+
+                  if (!gpsGraphic) {
+                    gpsGraphic = new Graphic({
+                      geometry: point,
+                      symbol: {
+                        type: "simple-marker",
+                        style: "triangle",
+                        color: "#2ecc71",
+                        size: "22px",
+                        angle: heading,
+                        outline: {
+                          color: "#ffffff",
+                          width: 2
+                        }
+                      }
+                    });
+
+                    accuracyGraphic = new Graphic({
+                      geometry: new Circle({
+                        center: point,
+                        radius: acc,
+                        radiusUnit: "meters"
+                      }),
+                      symbol: {
+                        type: "simple-fill",
+                        color: [46, 204, 113, 0.15],
+                        outline: {
+                          color: [46, 204, 113, 0.7],
+                          width: 1
+                        }
+                      }
+                    });
+
+                    trackGraphic = new Graphic({
+                      geometry: new Polyline({
+                        paths: [[[lon, lat]]],
+                        spatialReference: { wkid: 4326 }
+                      }),
+                      symbol: {
+                        type: "simple-line",
+                        color: "#2ecc71",
+                        width: 4
+                      }
+                    });
+
+                    gpsLayer.addMany([accuracyGraphic, trackGraphic, gpsGraphic]);
+                  } else {
+                    gpsGraphic.geometry = point;
+                    gpsGraphic.symbol.angle = heading;
+
+                    accuracyGraphic.geometry = new Circle({
+                      center: point,
+                      radius: acc,
+                      radiusUnit: "meters"
+                    });
+                  }
+
+                  if (!trackPoints.length) {
+                    trackPoints.push([lon, lat]);
+                  } else {
+                    const last = trackPoints[trackPoints.length - 1];
+                    const dist = roughDistanceMeters(last[1], last[0], lat, lon);
+
+                    if (dist >= 3 && dist < 80) {
+                      trackPoints.push([lon, lat]);
+                    }
+                  }
+
+                  trackGraphic.geometry = new Polyline({
+                    paths: [trackPoints],
+                    spatialReference: { wkid: 4326 }
+                  });
+
+                  if (acc <= 30) {
+                    setGpsStatus("bra ✅ " + acc + " m | " + speed.toFixed(1) + " km/h", "ok");
+                  } else if (acc <= 80) {
+                    setGpsStatus("okej ⚠️ " + acc + " m | " + speed.toFixed(1) + " km/h", "warn");
+                  } else {
+                    setGpsStatus("dålig precision ❌ " + acc + " m", "bad");
+                  }
+
+                  if (followGps && view) {
+                    view.goTo({
+                      center: point,
+                      zoom: Math.max(view.zoom, 17)
+                    }, {
+                      duration: 450
+                    }).catch(function(){});
+                  }
+
+                }, function(error) {
+                  setGpsStatus(error.message, "bad");
+                }, {
+                  enableHighAccuracy: true,
+                  maximumAge: 1000,
+                  timeout: 15000
+                });
+              }
+
+              function roughDistanceMeters(lat1, lon1, lat2, lon2) {
+                const R = 6371000;
+                const toRad = x => x * Math.PI / 180;
+                const dLat = toRad(lat2 - lat1);
+                const dLon = toRad(lon2 - lon1);
+                const a =
+                  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
               }
             </script>
           </body>
@@ -311,5 +517,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-map-test-apk
+          name: skotselytor-gps-live-apk
           path: app/build/outputs/apk/debug/app-debug.apk
