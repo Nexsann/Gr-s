@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 9
-                  versionName 'GPS-FOLLOW-TRACKUP-1.8'
+                  versionCode 10
+                  versionName 'GPS-FOLLOW-TRACKUP-1.9'
               }
           }
           EOF
@@ -591,8 +591,6 @@ jobs:
               let totalTrackMeters = 0;
 
               let lastFollowAt = 0;
-              let lastLayerBreathAt = 0;
-              let lastViewUpdating = false;
 
               function setMapStatus(text, cls) {
                 mapStatus.innerHTML = "Karta: <span class='" + cls + "'>" + text + "</span>";
@@ -620,7 +618,6 @@ jobs:
 
                 if (followGps && displayPos) {
                   lastFollowAt = 0;
-                  lastLayerBreathAt = 0;
                   moveMap(displayPos.lon, displayPos.lat, true);
                 }
               };
@@ -666,13 +663,6 @@ jobs:
                   },
                   ui: {
                     components: ["zoom", "attribution"]
-                  }
-                });
-
-                view.watch("updating", function(value) {
-                  lastViewUpdating = value;
-                  if (!value) {
-                    lastLayerBreathAt = performance.now();
                   }
                 });
 
@@ -811,13 +801,7 @@ jobs:
 
                 const now = performance.now();
 
-                if (!force && now - lastFollowAt < 250) {
-                  return;
-                }
-
-                if (!force && followGps && lastViewUpdating && now - lastLayerBreathAt > 900) {
-                  lastLayerBreathAt = now;
-                  lastFollowAt = now;
+                if (!force && now - lastFollowAt < 350) {
                   return;
                 }
 
@@ -832,8 +816,7 @@ jobs:
                 }
 
                 view.goTo(target, {
-                  duration: force ? 180 : 240,
-                  easing: "linear"
+                  animate: false
                 }).catch(function(){});
               }
 
@@ -846,10 +829,6 @@ jobs:
 
                   drawTrack();
                   drawGpsOverlay(displayPos.lon, displayPos.lat);
-
-                  if (followGps) {
-                    moveMap(displayPos.lon, displayPos.lat, false);
-                  }
                 }
 
                 requestAnimationFrame(loop);
