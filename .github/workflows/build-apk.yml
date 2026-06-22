@@ -1,4 +1,4 @@
-name: Build Skötselytor GPS APK
+name: Build Skötselytor GPS MAP TEST APK
 
 on:
   workflow_dispatch:
@@ -26,10 +26,11 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create WebView test project
+      - name: Create Android WebView Map Test project
         run: |
-          rm -rf app
-          mkdir -p app/src/main/java/se/skotselytor/webviewtest
+          rm -rf app build.gradle settings.gradle
+
+          mkdir -p app/src/main/java/se/skotselytor/gpsmaptest
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
 
@@ -50,169 +51,256 @@ jobs:
               }
           }
 
-          rootProject.name = "SkotselytorWebViewTest"
-          include ":app"
+          rootProject.name = 'SkotselytorGpsMapTest'
+          include ':app'
           EOF
 
           cat > build.gradle <<'EOF'
           plugins {
-              id "com.android.application" version "8.7.3" apply false
+              id 'com.android.application' version '8.7.2' apply false
           }
           EOF
 
           cat > app/build.gradle <<'EOF'
           plugins {
-              id "com.android.application"
+              id 'com.android.application'
           }
 
           android {
-              namespace "se.skotselytor.webviewtest"
+              namespace 'se.skotselytor.gpsmaptest'
               compileSdk 35
 
               defaultConfig {
-                  applicationId "se.skotselytor.webviewtest"
+                  applicationId 'se.skotselytor.gpsmaptest'
                   minSdk 26
                   targetSdk 35
                   versionCode 1
-                  versionName "0.2-webviewtest"
+                  versionName 'MAP-TEST-1.0'
               }
           }
           EOF
 
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">Skötselytor Map Test</string>
+          </resources>
+          EOF
+
           cat > app/src/main/res/values/styles.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
                   <item name="android:windowNoTitle">true</item>
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#22c55e</item>
+                  <item name="android:windowActionBar">false</item>
               </style>
           </resources>
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.INTERNET" />
 
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor WebViewtest"
+                  android:label="Skötselytor Map Test"
                   android:usesCleartextTraffic="true"
-                  android:hardwareAccelerated="true">
+                  android:allowBackup="false"
+                  android:supportsRtl="true">
 
                   <activity
                       android:name=".MainActivity"
-                      android:exported="true"
-                      android:screenOrientation="portrait">
+                      android:exported="true">
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-
               </application>
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/webviewtest/MainActivity.java <<'EOF'
-          package se.skotselytor.webviewtest;
+          cat > app/src/main/java/se/skotselytor/gpsmaptest/MainActivity.java <<'EOF'
+          package se.skotselytor.gpsmaptest;
 
-          import android.annotation.SuppressLint;
           import android.app.Activity;
           import android.os.Bundle;
+          import android.view.View;
+          import android.view.Window;
+          import android.view.WindowManager;
+          import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import android.webkit.ConsoleMessage;
 
           public class MainActivity extends Activity {
               private WebView webView;
 
-              @SuppressLint("SetJavaScriptEnabled")
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
+                  requestWindowFeature(Window.FEATURE_NO_TITLE);
+                  getWindow().setFlags(
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN
+                  );
+
+                  getWindow().getDecorView().setSystemUiVisibility(
+                      View.SYSTEM_UI_FLAG_FULLSCREEN |
+                      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  );
+
                   webView = new WebView(this);
                   setContentView(webView);
 
-                  WebSettings s = webView.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  s.setAllowFileAccess(true);
-                  s.setAllowContentAccess(true);
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setAllowFileAccessFromFileURLs(true);
+                  settings.setAllowUniversalAccessFromFileURLs(true);
+                  settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
                   webView.setWebViewClient(new WebViewClient());
+
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                          return true;
+                      }
+                  });
+
                   webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
               }
           }
           EOF
 
           cat > app/src/main/assets/index.html <<'EOF'
-          <!doctype html>
+          <!DOCTYPE html>
           <html lang="sv">
           <head>
-            <meta charset="utf-8"/>
-            <meta name="viewport" content="width=device-width, initial-scale=1"/>
-            <title>WebView Test</title>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+            <title>Skötselytor Map Test</title>
+
+            <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
+            <script src="https://js.arcgis.com/4.31/"></script>
+
             <style>
-              html, body {
-                margin:0;
-                height:100%;
-                background:#020617;
-                color:white;
-                font-family:system-ui, sans-serif;
+              html, body, #viewDiv {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+                width: 100%;
+                overflow: hidden;
+                background: #050816;
+                font-family: Arial, sans-serif;
               }
 
-              .wrap {
-                min-height:100%;
-                display:flex;
-                flex-direction:column;
-                align-items:center;
-                justify-content:center;
-                padding:32px;
-                text-align:center;
+              #status {
+                position: absolute;
+                top: 12px;
+                left: 12px;
+                right: 12px;
+                z-index: 99;
+                background: rgba(5, 8, 22, 0.88);
+                color: white;
+                padding: 12px 14px;
+                border-radius: 14px;
+                font-size: 14px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
               }
 
-              h1 {
-                font-size:28px;
-                margin:0 0 16px;
+              .ok {
+                color: #7CFF9B;
+                font-weight: bold;
               }
 
-              p {
-                color:#cbd5e1;
-                font-size:17px;
-                line-height:1.5;
-              }
-
-              button {
-                margin-top:22px;
-                border:0;
-                border-radius:16px;
-                padding:14px 20px;
-                background:#22c55e;
-                color:#052e16;
-                font-weight:900;
-                font-size:16px;
-              }
-
-              #result {
-                margin-top:18px;
-                color:#86efac;
-                font-weight:800;
+              .bad {
+                color: #FF7777;
+                font-weight: bold;
               }
             </style>
           </head>
+
           <body>
-            <div class="wrap">
-              <h1>Skötselytor WebViewtest</h1>
-              <p>Om du ser detta fungerar WebView i appen.</p>
-              <button onclick="document.getElementById('result').textContent='JavaScript fungerar också ✅'">
-                Testa JavaScript
-              </button>
-              <div id="result"></div>
-            </div>
+            <div id="viewDiv"></div>
+            <div id="status">Laddar Skötselytor-kartan...</div>
+
+            <script>
+              const statusBox = document.getElementById("status");
+
+              function setStatus(text, type) {
+                statusBox.innerHTML = text;
+                statusBox.className = type || "";
+              }
+
+              window.addEventListener("error", function(e) {
+                setStatus("JavaScript-fel:<br>" + e.message, "bad");
+              });
+
+              window.addEventListener("unhandledrejection", function(e) {
+                setStatus("Laddningsfel:<br>" + e.reason, "bad");
+              });
+
+              try {
+                require([
+                  "esri/config",
+                  "esri/WebMap",
+                  "esri/views/MapView"
+                ], function(esriConfig, WebMap, MapView) {
+
+                  esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
+
+                  const webmap = new WebMap({
+                    portalItem: {
+                      id: "4811ba982b9e4a97b01cf4353224374b"
+                    }
+                  });
+
+                  const view = new MapView({
+                    container: "viewDiv",
+                    map: webmap,
+                    center: [15.6214, 58.4108],
+                    zoom: 12,
+                    constraints: {
+                      rotationEnabled: true
+                    },
+                    ui: {
+                      components: ["zoom", "attribution"]
+                    }
+                  });
+
+                  view.when(function() {
+                    setStatus("Kartan laddad ✅<br>Ingen GPS eller bakgrundsspårning är aktiv.", "ok");
+                    setTimeout(function() {
+                      statusBox.style.display = "none";
+                    }, 3500);
+                  }).catch(function(error) {
+                    setStatus("Kartan kunde inte laddas:<br>" + error.message, "bad");
+                  });
+
+                });
+              } catch (err) {
+                setStatus("Startfel:<br>" + err.message, "bad");
+              }
+            </script>
           </body>
           </html>
           EOF
@@ -223,5 +311,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-webviewtest-apk
+          name: skotselytor-map-test-apk
           path: app/build/outputs/apk/debug/app-debug.apk
