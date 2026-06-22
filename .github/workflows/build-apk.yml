@@ -26,10 +26,11 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create absolute minimal Android project
+      - name: Create WebView test project
         run: |
           rm -rf app
-          mkdir -p app/src/main/java/se/skotselytor/starttest
+          mkdir -p app/src/main/java/se/skotselytor/webviewtest
+          mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
 
           cat > settings.gradle <<'EOF'
@@ -49,7 +50,7 @@ jobs:
               }
           }
 
-          rootProject.name = "SkotselytorStartTest"
+          rootProject.name = "SkotselytorWebViewTest"
           include ":app"
           EOF
 
@@ -65,15 +66,15 @@ jobs:
           }
 
           android {
-              namespace "se.skotselytor.starttest"
+              namespace "se.skotselytor.webviewtest"
               compileSdk 35
 
               defaultConfig {
-                  applicationId "se.skotselytor.starttest"
+                  applicationId "se.skotselytor.webviewtest"
                   minSdk 26
                   targetSdk 35
                   versionCode 1
-                  versionName "0.1-starttest"
+                  versionName "0.2-webviewtest"
               }
           }
           EOF
@@ -93,9 +94,12 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+              <uses-permission android:name="android.permission.INTERNET"/>
+
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor Starttest"
+                  android:label="Skötselytor WebViewtest"
+                  android:usesCleartextTraffic="true"
                   android:hardwareAccelerated="true">
 
                   <activity
@@ -112,47 +116,105 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/java/se/skotselytor/starttest/MainActivity.java <<'EOF'
-          package se.skotselytor.starttest;
+          cat > app/src/main/java/se/skotselytor/webviewtest/MainActivity.java <<'EOF'
+          package se.skotselytor.webviewtest;
 
+          import android.annotation.SuppressLint;
           import android.app.Activity;
-          import android.graphics.Color;
           import android.os.Bundle;
-          import android.view.Gravity;
-          import android.widget.LinearLayout;
-          import android.widget.TextView;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
 
           public class MainActivity extends Activity {
+              private WebView webView;
+
+              @SuppressLint("SetJavaScriptEnabled")
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setGravity(Gravity.CENTER);
-                  root.setPadding(40, 40, 40, 40);
-                  root.setBackgroundColor(Color.rgb(2, 6, 23));
+                  webView = new WebView(this);
+                  setContentView(webView);
 
-                  TextView title = new TextView(this);
-                  title.setText("Skötselytor Starttest");
-                  title.setTextColor(Color.WHITE);
-                  title.setTextSize(26);
-                  title.setGravity(Gravity.CENTER);
-                  title.setTypeface(null, 1);
+                  WebSettings s = webView.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setAllowFileAccess(true);
+                  s.setAllowContentAccess(true);
 
-                  TextView text = new TextView(this);
-                  text.setText("Om du ser detta fungerar appstarten.\n\nNästa steg är att lägga tillbaka WebView/karta.");
-                  text.setTextColor(Color.rgb(203, 213, 225));
-                  text.setTextSize(16);
-                  text.setGravity(Gravity.CENTER);
-                  text.setPadding(0, 24, 0, 0);
-
-                  root.addView(title);
-                  root.addView(text);
-
-                  setContentView(root);
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.loadUrl("file:///android_asset/index.html");
               }
           }
+          EOF
+
+          cat > app/src/main/assets/index.html <<'EOF'
+          <!doctype html>
+          <html lang="sv">
+          <head>
+            <meta charset="utf-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            <title>WebView Test</title>
+            <style>
+              html, body {
+                margin:0;
+                height:100%;
+                background:#020617;
+                color:white;
+                font-family:system-ui, sans-serif;
+              }
+
+              .wrap {
+                min-height:100%;
+                display:flex;
+                flex-direction:column;
+                align-items:center;
+                justify-content:center;
+                padding:32px;
+                text-align:center;
+              }
+
+              h1 {
+                font-size:28px;
+                margin:0 0 16px;
+              }
+
+              p {
+                color:#cbd5e1;
+                font-size:17px;
+                line-height:1.5;
+              }
+
+              button {
+                margin-top:22px;
+                border:0;
+                border-radius:16px;
+                padding:14px 20px;
+                background:#22c55e;
+                color:#052e16;
+                font-weight:900;
+                font-size:16px;
+              }
+
+              #result {
+                margin-top:18px;
+                color:#86efac;
+                font-weight:800;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="wrap">
+              <h1>Skötselytor WebViewtest</h1>
+              <p>Om du ser detta fungerar WebView i appen.</p>
+              <button onclick="document.getElementById('result').textContent='JavaScript fungerar också ✅'">
+                Testa JavaScript
+              </button>
+              <div id="result"></div>
+            </div>
+          </body>
+          </html>
           EOF
 
       - name: Build APK
@@ -161,5 +223,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-starttest-apk
+          name: skotselytor-webviewtest-apk
           path: app/build/outputs/apk/debug/app-debug.apk
