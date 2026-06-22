@@ -1,652 +1,503 @@
-name: Build Skötselytor GPS SMOOTH APK
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Skötselytor GPS Smooth</title>
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
+  <script src="https://js.arcgis.com/4.31/"></script>
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+  <style>
+    html, body, #viewDiv {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: #050816;
+      font-family: Arial, sans-serif;
+      touch-action: none;
+    }
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    #panel {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 99;
+      background: rgba(5, 8, 22, 0.88);
+      color: white;
+      padding: 12px 14px;
+      border-radius: 14px;
+      font-size: 14px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      pointer-events: none;
+    }
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+    #buttons {
+      position: absolute;
+      right: 14px;
+      bottom: 26px;
+      z-index: 99;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 15px 18px;
+      font-size: 16px;
+      font-weight: bold;
+      background: #2ecc71;
+      color: #07110b;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
 
-      - name: Create Android WebView GPS Smooth project
-        run: |
-          rm -rf app build.gradle settings.gradle
+    button.off {
+      background: #d8dde6;
+      color: #111827;
+    }
 
-          mkdir -p app/src/main/java/se/skotselytor/gpssmooth
-          mkdir -p app/src/main/assets
-          mkdir -p app/src/main/res/values
+    .ok { color: #7CFF9B; font-weight: bold; }
+    .bad { color: #FF7777; font-weight: bold; }
+    .warn { color: #FFD166; font-weight: bold; }
+  </style>
+</head>
 
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+<body>
+  <div id="viewDiv"></div>
+
+  <div id="panel">
+    <div><b>Skötselytor GPS Smooth</b></div>
+    <div id="mapStatus">Karta: laddar...</div>
+    <div id="gpsStatus">GPS: väntar...</div>
+    <div id="followStatus">Följning: låst</div>
+  </div>
+
+  <div id="buttons">
+    <button id="followBtn">🔒 FÖLJ</button>
+    <button id="centerBtn">🎯 MITT</button>
+  </div>
+
+  <script>
+    const mapStatus = document.getElementById("mapStatus");
+    const gpsStatus = document.getElementById("gpsStatus");
+    const followStatus = document.getElementById("followStatus");
+    const followBtn = document.getElementById("followBtn");
+    const centerBtn = document.getElementById("centerBtn");
+
+    let view;
+
+    let gpsDotGraphic;
+    let headingGraphic;
+    let accuracyGraphic;
+    let trackHaloGraphic;
+    let trackGraphic;
+
+    let followGps = true;
+
+    let lastRaw = null;
+    let displayPos = null;
+    let animFrom = null;
+    let animTo = null;
+    let animStart = 0;
+    let animDuration = 850;
+
+    let lastAccuracy = 0;
+    let lastSpeed = 0;
+    let lastHeadingDeg = 0;
+    let hasHeading = false;
+
+    let trackPoints = [];
+
+    function setMapStatus(text, cls) {
+      mapStatus.innerHTML = "Karta: <span class='" + (cls || "") + "'>" + text + "</span>";
+    }
+
+    function setGpsStatus(text, cls) {
+      gpsStatus.innerHTML = "GPS: <span class='" + (cls || "") + "'>" + text + "</span>";
+    }
+
+    function updateFollowUi() {
+      if (followGps) {
+        followBtn.textContent = "🔒 FÖLJ";
+        followBtn.classList.remove("off");
+        followStatus.innerHTML = "Följning: <span class='ok'>låst, zoom ändras inte</span>";
+      } else {
+        followBtn.textContent = "🔓 FRI";
+        followBtn.classList.add("off");
+        followStatus.innerHTML = "Följning: <span class='warn'>fri panorering/zoom</span>";
+      }
+    }
+
+    followBtn.onclick = function() {
+      followGps = !followGps;
+      updateFollowUi();
+    };
+
+    centerBtn.onclick = function() {
+      if (displayPos && view) {
+        view.center = {
+          longitude: displayPos.lon,
+          latitude: displayPos.lat
+        };
+      }
+    };
+
+    updateFollowUi();
+
+    window.addEventListener("error", function(e) {
+      setMapStatus("JavaScript-fel: " + e.message, "bad");
+    });
+
+    window.addEventListener("unhandledrejection", function(e) {
+      setMapStatus("Laddningsfel: " + e.reason, "bad");
+    });
+
+    require([
+      "esri/config",
+      "esri/WebMap",
+      "esri/views/MapView",
+      "esri/Graphic",
+      "esri/geometry/Point",
+      "esri/geometry/Circle",
+      "esri/geometry/Polyline"
+    ], function(esriConfig, WebMap, MapView, Graphic, Point, Circle, Polyline) {
+
+      esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
+
+      const webmap = new WebMap({
+        portalItem: {
+          id: "4811ba982b9e4a97b01cf4353224374b"
+        }
+      });
+
+      view = new MapView({
+        container: "viewDiv",
+        map: webmap,
+        center: [15.6214, 58.4108],
+        zoom: 12,
+        constraints: {
+          rotationEnabled: true
+        },
+        ui: {
+          components: ["zoom", "attribution"]
+        }
+      });
+
+      view.when(function() {
+        setMapStatus("laddad ✅", "ok");
+        startGps(Graphic, Point, Circle, Polyline);
+        requestAnimationFrame(animationLoop);
+      }).catch(function(error) {
+        setMapStatus("kunde inte laddas: " + error.message, "bad");
+      });
+    });
+
+    function startGps(Graphic, Point, Circle, Polyline) {
+      if (!navigator.geolocation) {
+        setGpsStatus("stöds inte i denna WebView", "bad");
+        return;
+      }
+
+      setGpsStatus("startar...", "warn");
+
+      navigator.geolocation.watchPosition(function(pos) {
+        const lon = pos.coords.longitude;
+        const lat = pos.coords.latitude;
+        const acc = Math.round(pos.coords.accuracy || 0);
+        const speed = pos.coords.speed ? (pos.coords.speed * 3.6) : 0;
+        const gpsHeading = Number(pos.coords.heading);
+
+        lastAccuracy = acc;
+        lastSpeed = speed;
+
+        const next = { lon, lat };
+
+        if (!displayPos) {
+          displayPos = next;
+          animFrom = next;
+          animTo = next;
+        } else {
+          animFrom = { lon: displayPos.lon, lat: displayPos.lat };
+          animTo = next;
+          animStart = performance.now();
+
+          const dist = roughDistanceMeters(animFrom.lat, animFrom.lon, animTo.lat, animTo.lon);
+          animDuration = Math.max(500, Math.min(1200, dist * 90));
+        }
+
+        if (lastRaw) {
+          const distRaw = roughDistanceMeters(lastRaw.lat, lastRaw.lon, lat, lon);
+
+          if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && speed > 1.2) {
+            lastHeadingDeg = gpsHeading;
+            hasHeading = true;
+          } else if (distRaw > 1.5) {
+            lastHeadingDeg = bearingDegrees(lastRaw.lat, lastRaw.lon, lat, lon);
+            hasHeading = true;
           }
 
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
+          if (distRaw >= 3 && distRaw < 80) {
+            trackPoints.push([lon, lat]);
           }
+        } else {
+          trackPoints.push([lon, lat]);
+        }
 
-          rootProject.name = 'SkotselytorGpsSmooth'
-          include ':app'
-          EOF
+        lastRaw = next;
 
-          cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.7.2' apply false
+        if (acc <= 30) {
+          setGpsStatus("bra ✅ " + acc + " m | " + speed.toFixed(1) + " km/h", "ok");
+        } else if (acc <= 80) {
+          setGpsStatus("okej ⚠️ " + acc + " m | " + speed.toFixed(1) + " km/h", "warn");
+        } else {
+          setGpsStatus("dålig precision ❌ " + acc + " m", "bad");
+        }
+
+      }, function(error) {
+        setGpsStatus(error.message, "bad");
+      }, {
+        enableHighAccuracy: true,
+        maximumAge: 500,
+        timeout: 15000
+      });
+
+      window.__ArcGIS = { Graphic, Point, Circle, Polyline };
+    }
+
+    function animationLoop(now) {
+      if (view && animTo && window.__ArcGIS) {
+        if (!displayPos) {
+          displayPos = animTo;
+        }
+
+        let t = 1;
+        if (animStart && animDuration > 0) {
+          t = Math.min(1, (now - animStart) / animDuration);
+        }
+
+        const eased = easeOutCubic(t);
+
+        displayPos = {
+          lon: lerp(animFrom.lon, animTo.lon, eased),
+          lat: lerp(animFrom.lat, animTo.lat, eased)
+        };
+
+        drawGps(displayPos.lon, displayPos.lat);
+
+        if (followGps) {
+          view.center = {
+            longitude: displayPos.lon,
+            latitude: displayPos.lat
+          };
+        }
+      }
+
+      requestAnimationFrame(animationLoop);
+    }
+
+    function drawGps(lon, lat) {
+      const Graphic = window.__ArcGIS.Graphic;
+      const Point = window.__ArcGIS.Point;
+      const Circle = window.__ArcGIS.Circle;
+      const Polyline = window.__ArcGIS.Polyline;
+
+      const point = new Point({
+        longitude: lon,
+        latitude: lat
+      });
+
+      const trackPath = getTrackPath(lon, lat);
+
+      const haloSymbol = {
+        type: "simple-line",
+        color: [255, 255, 255, 0.92],
+        width: 10,
+        cap: "round",
+        join: "round"
+      };
+
+      const trackSymbol = {
+        type: "simple-line",
+        color: [29, 122, 255, 1],
+        width: 5,
+        cap: "round",
+        join: "round"
+      };
+
+      const headingSymbol = hasHeading ? {
+        type: "simple-marker",
+        style: "triangle",
+        color: [29, 122, 255, 0.95],
+        size: "18px",
+        angle: lastHeadingDeg,
+        outline: {
+          color: [255, 255, 255, 0.95],
+          width: 2
+        }
+      } : {
+        type: "simple-marker",
+        style: "triangle",
+        color: [29, 122, 255, 0],
+        size: "18px",
+        angle: lastHeadingDeg,
+        outline: {
+          color: [255, 255, 255, 0],
+          width: 0
+        }
+      };
+
+      const dotSymbol = {
+        type: "simple-marker",
+        style: "circle",
+        color: [29, 122, 255, 1],
+        size: "16px",
+        outline: {
+          color: [255, 255, 255, 1],
+          width: 3
+        }
+      };
+
+      if (!gpsDotGraphic) {
+        trackHaloGraphic = new Graphic({
+          geometry: new Polyline({
+            paths: [trackPath],
+            spatialReference: { wkid: 4326 }
+          }),
+          symbol: haloSymbol
+        });
+
+        trackGraphic = new Graphic({
+          geometry: new Polyline({
+            paths: [trackPath],
+            spatialReference: { wkid: 4326 }
+          }),
+          symbol: trackSymbol
+        });
+
+        accuracyGraphic = new Graphic({
+          geometry: new Circle({
+            center: point,
+            radius: Math.max(4, lastAccuracy),
+            radiusUnit: "meters"
+          }),
+          symbol: {
+            type: "simple-fill",
+            color: [29, 122, 255, 0.13],
+            outline: {
+              color: [29, 122, 255, 0.45],
+              width: 1
+            }
           }
-          EOF
-
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-          }
-
-          android {
-              namespace 'se.skotselytor.gpssmooth'
-              compileSdk 35
-
-              defaultConfig {
-                  applicationId 'se.skotselytor.gpssmooth'
-                  minSdk 26
-                  targetSdk 35
-                  versionCode 1
-                  versionName 'GPS-SMOOTH-1.0'
-              }
-          }
-          EOF
-
-          cat > app/src/main/res/values/strings.xml <<'EOF'
-          <resources>
-              <string name="app_name">Skötselytor GPS Smooth</string>
-          </resources>
-          EOF
-
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:windowNoTitle">true</item>
-                  <item name="android:windowActionBar">false</item>
-                  <item name="android:windowFullscreen">true</item>
-                  <item name="android:hardwareAccelerated">true</item>
-              </style>
-          </resources>
-          EOF
-
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-              <application
-                  android:theme="@style/AppTheme"
-                  android:label="Skötselytor GPS Smooth"
-                  android:usesCleartextTraffic="true"
-                  android:hardwareAccelerated="true"
-                  android:allowBackup="false"
-                  android:supportsRtl="true">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:screenOrientation="portrait">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-
-          cat > app/src/main/java/se/skotselytor/gpssmooth/MainActivity.java <<'EOF'
-          package se.skotselytor.gpssmooth;
-
-          import android.Manifest;
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.os.Build;
-          import android.content.pm.PackageManager;
-          import android.view.Display;
-          import android.view.View;
-          import android.view.Window;
-          import android.view.WindowManager;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import android.webkit.GeolocationPermissions;
-          import android.webkit.ConsoleMessage;
-
-          public class MainActivity extends Activity {
-              private WebView webView;
-              private static final int LOCATION_REQUEST = 1001;
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  requestWindowFeature(Window.FEATURE_NO_TITLE);
-
-                  getWindow().setFlags(
-                      WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                      WindowManager.LayoutParams.FLAG_FULLSCREEN
-                  );
-
-                  preferHighestRefreshRate();
-
-                  getWindow().getDecorView().setSystemUiVisibility(
-                      View.SYSTEM_UI_FLAG_FULLSCREEN |
-                      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-                      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  );
-
-                  requestLocationPermissionIfNeeded();
-
-                  webView = new WebView(this);
-                  webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-                  setContentView(webView);
-
-                  WebSettings settings = webView.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
-                  settings.setGeolocationEnabled(true);
-                  settings.setAllowFileAccess(true);
-                  settings.setAllowContentAccess(true);
-                  settings.setAllowFileAccessFromFileURLs(true);
-                  settings.setAllowUniversalAccessFromFileURLs(true);
-                  settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-
-                  webView.setWebViewClient(new WebViewClient());
-
-                  webView.setWebChromeClient(new WebChromeClient() {
-                      @Override
-                      public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                          callback.invoke(origin, true, false);
-                      }
-
-                      @Override
-                      public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                          return true;
-                      }
-                  });
-
-                  webView.loadUrl("file:///android_asset/index.html");
-              }
-
-              private void preferHighestRefreshRate() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      try {
-                          Display display = getWindowManager().getDefaultDisplay();
-                          Display.Mode[] modes = display.getSupportedModes();
-
-                          float bestRefresh = 0f;
-                          int bestModeId = 0;
-
-                          for (Display.Mode mode : modes) {
-                              if (mode.getRefreshRate() > bestRefresh) {
-                                  bestRefresh = mode.getRefreshRate();
-                                  bestModeId = mode.getModeId();
-                              }
-                          }
-
-                          if (bestModeId != 0) {
-                              WindowManager.LayoutParams attrs = getWindow().getAttributes();
-                              attrs.preferredDisplayModeId = bestModeId;
-                              getWindow().setAttributes(attrs);
-                          }
-                      } catch (Throwable ignored) {}
-                  }
-              }
-
-              private void requestLocationPermissionIfNeeded() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                          requestPermissions(
-                              new String[]{
-                                  Manifest.permission.ACCESS_FINE_LOCATION,
-                                  Manifest.permission.ACCESS_COARSE_LOCATION
-                              },
-                              LOCATION_REQUEST
-                          );
-                      }
-                  }
-              }
-
-              @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-          }
-          EOF
-
-          cat > app/src/main/assets/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html lang="sv">
-          <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-            <title>Skötselytor GPS Smooth</title>
-
-            <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
-            <script src="https://js.arcgis.com/4.31/"></script>
-
-            <style>
-              html, body, #viewDiv {
-                margin: 0;
-                padding: 0;
-                height: 100%;
-                width: 100%;
-                overflow: hidden;
-                background: #050816;
-                font-family: Arial, sans-serif;
-                touch-action: none;
-              }
-
-              #panel {
-                position: absolute;
-                top: 12px;
-                left: 12px;
-                right: 12px;
-                z-index: 99;
-                background: rgba(5, 8, 22, 0.88);
-                color: white;
-                padding: 12px 14px;
-                border-radius: 14px;
-                font-size: 14px;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-                pointer-events: none;
-              }
-
-              #buttons {
-                position: absolute;
-                right: 14px;
-                bottom: 26px;
-                z-index: 99;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-              }
-
-              button {
-                border: none;
-                border-radius: 999px;
-                padding: 15px 18px;
-                font-size: 16px;
-                font-weight: bold;
-                background: #2ecc71;
-                color: #07110b;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-              }
-
-              button.off {
-                background: #d8dde6;
-                color: #111827;
-              }
-
-              .ok { color: #7CFF9B; font-weight: bold; }
-              .bad { color: #FF7777; font-weight: bold; }
-              .warn { color: #FFD166; font-weight: bold; }
-            </style>
-          </head>
-
-          <body>
-            <div id="viewDiv"></div>
-
-            <div id="panel">
-              <div><b>Skötselytor GPS Smooth</b></div>
-              <div id="mapStatus">Karta: laddar...</div>
-              <div id="gpsStatus">GPS: väntar...</div>
-              <div id="followStatus">Följning: låst</div>
-            </div>
-
-            <div id="buttons">
-              <button id="followBtn">🔒 FÖLJ</button>
-              <button id="centerBtn">🎯 MITT</button>
-            </div>
-
-            <script>
-              const mapStatus = document.getElementById("mapStatus");
-              const gpsStatus = document.getElementById("gpsStatus");
-              const followStatus = document.getElementById("followStatus");
-              const followBtn = document.getElementById("followBtn");
-              const centerBtn = document.getElementById("centerBtn");
-
-              let view;
-              let gpsGraphic;
-              let accuracyGraphic;
-              let trackGraphic;
-
-              let followGps = true;
-
-              let lastRaw = null;
-              let displayPos = null;
-              let animFrom = null;
-              let animTo = null;
-              let animStart = 0;
-              let animDuration = 850;
-
-              let lastAccuracy = 0;
-              let lastSpeed = 0;
-              let trackPoints = [];
-
-              function setMapStatus(text, cls) {
-                mapStatus.innerHTML = "Karta: <span class='" + (cls || "") + "'>" + text + "</span>";
-              }
-
-              function setGpsStatus(text, cls) {
-                gpsStatus.innerHTML = "GPS: <span class='" + (cls || "") + "'>" + text + "</span>";
-              }
-
-              function updateFollowUi() {
-                if (followGps) {
-                  followBtn.textContent = "🔒 FÖLJ";
-                  followBtn.classList.remove("off");
-                  followStatus.innerHTML = "Följning: <span class='ok'>låst, zoom ändras inte</span>";
-                } else {
-                  followBtn.textContent = "🔓 FRI";
-                  followBtn.classList.add("off");
-                  followStatus.innerHTML = "Följning: <span class='warn'>fri panorering/zoom</span>";
-                }
-              }
-
-              followBtn.onclick = function() {
-                followGps = !followGps;
-                updateFollowUi();
-              };
-
-              centerBtn.onclick = function() {
-                if (displayPos && view) {
-                  view.center = {
-                    longitude: displayPos.lon,
-                    latitude: displayPos.lat
-                  };
-                }
-              };
-
-              updateFollowUi();
-
-              window.addEventListener("error", function(e) {
-                setMapStatus("JavaScript-fel: " + e.message, "bad");
-              });
-
-              window.addEventListener("unhandledrejection", function(e) {
-                setMapStatus("Laddningsfel: " + e.reason, "bad");
-              });
-
-              require([
-                "esri/config",
-                "esri/WebMap",
-                "esri/views/MapView",
-                "esri/Graphic",
-                "esri/geometry/Point",
-                "esri/geometry/Circle",
-                "esri/geometry/Polyline"
-              ], function(esriConfig, WebMap, MapView, Graphic, Point, Circle, Polyline) {
-
-                esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
-
-                const webmap = new WebMap({
-                  portalItem: {
-                    id: "4811ba982b9e4a97b01cf4353224374b"
-                  }
-                });
-
-                view = new MapView({
-                  container: "viewDiv",
-                  map: webmap,
-                  center: [15.6214, 58.4108],
-                  zoom: 12,
-                  constraints: {
-                    rotationEnabled: true
-                  },
-                  ui: {
-                    components: ["zoom", "attribution"]
-                  }
-                });
-
-                view.when(function() {
-                  setMapStatus("laddad ✅", "ok");
-                  startGps(Graphic, Point, Circle, Polyline);
-                  requestAnimationFrame(animationLoop);
-                }).catch(function(error) {
-                  setMapStatus("kunde inte laddas: " + error.message, "bad");
-                });
-              });
-
-              function startGps(Graphic, Point, Circle, Polyline) {
-                if (!navigator.geolocation) {
-                  setGpsStatus("stöds inte i denna WebView", "bad");
-                  return;
-                }
-
-                setGpsStatus("startar...", "warn");
-
-                navigator.geolocation.watchPosition(function(pos) {
-                  const lon = pos.coords.longitude;
-                  const lat = pos.coords.latitude;
-                  const acc = Math.round(pos.coords.accuracy || 0);
-                  const speed = pos.coords.speed ? (pos.coords.speed * 3.6) : 0;
-
-                  lastAccuracy = acc;
-                  lastSpeed = speed;
-
-                  const next = { lon, lat };
-
-                  if (!displayPos) {
-                    displayPos = next;
-                    animFrom = next;
-                    animTo = next;
-                  } else {
-                    animFrom = { lon: displayPos.lon, lat: displayPos.lat };
-                    animTo = next;
-                    animStart = performance.now();
-
-                    const dist = roughDistanceMeters(animFrom.lat, animFrom.lon, animTo.lat, animTo.lon);
-                    animDuration = Math.max(500, Math.min(1200, dist * 90));
-                  }
-
-                  if (lastRaw) {
-                    const distRaw = roughDistanceMeters(lastRaw.lat, lastRaw.lon, lat, lon);
-                    if (distRaw >= 3 && distRaw < 80) {
-                      trackPoints.push([lon, lat]);
-                    }
-                  } else {
-                    trackPoints.push([lon, lat]);
-                  }
-
-                  lastRaw = next;
-
-                  if (acc <= 30) {
-                    setGpsStatus("bra ✅ " + acc + " m | " + speed.toFixed(1) + " km/h", "ok");
-                  } else if (acc <= 80) {
-                    setGpsStatus("okej ⚠️ " + acc + " m | " + speed.toFixed(1) + " km/h", "warn");
-                  } else {
-                    setGpsStatus("dålig precision ❌ " + acc + " m", "bad");
-                  }
-
-                }, function(error) {
-                  setGpsStatus(error.message, "bad");
-                }, {
-                  enableHighAccuracy: true,
-                  maximumAge: 500,
-                  timeout: 15000
-                });
-
-                window.__ArcGIS = { Graphic, Point, Circle, Polyline };
-              }
-
-              function animationLoop(now) {
-                if (view && animTo && window.__ArcGIS) {
-                  if (!displayPos) {
-                    displayPos = animTo;
-                  }
-
-                  let t = 1;
-                  if (animStart && animDuration > 0) {
-                    t = Math.min(1, (now - animStart) / animDuration);
-                  }
-
-                  const eased = easeOutCubic(t);
-
-                  displayPos = {
-                    lon: lerp(animFrom.lon, animTo.lon, eased),
-                    lat: lerp(animFrom.lat, animTo.lat, eased)
-                  };
-
-                  drawGps(displayPos.lon, displayPos.lat);
-
-                  if (followGps) {
-                    view.center = {
-                      longitude: displayPos.lon,
-                      latitude: displayPos.lat
-                    };
-                  }
-                }
-
-                requestAnimationFrame(animationLoop);
-              }
-
-              function drawGps(lon, lat) {
-                const Graphic = window.__ArcGIS.Graphic;
-                const Point = window.__ArcGIS.Point;
-                const Circle = window.__ArcGIS.Circle;
-                const Polyline = window.__ArcGIS.Polyline;
-
-                const point = new Point({
-                  longitude: lon,
-                  latitude: lat
-                });
-
-                if (!trackGraphic) {
-                  trackGraphic = new Graphic({
-                    geometry: new Polyline({
-                      paths: [trackPoints],
-                      spatialReference: { wkid: 4326 }
-                    }),
-                    symbol: {
-                      type: "simple-line",
-                      color: [46, 204, 113, 0.95],
-                      width: 4
-                    }
-                  });
-
-                  accuracyGraphic = new Graphic({
-                    geometry: new Circle({
-                      center: point,
-                      radius: Math.max(2, lastAccuracy),
-                      radiusUnit: "meters"
-                    }),
-                    symbol: {
-                      type: "simple-fill",
-                      color: [46, 204, 113, 0.14],
-                      outline: {
-                        color: [46, 204, 113, 0.65],
-                        width: 1
-                      }
-                    }
-                  });
-
-                  gpsGraphic = new Graphic({
-                    geometry: point,
-                    symbol: {
-                      type: "simple-marker",
-                      style: "circle",
-                      color: [0, 255, 120, 1],
-                      size: "24px",
-                      outline: {
-                        color: [255, 255, 255, 1],
-                        width: 4
-                      }
-                    }
-                  });
-
-                  view.graphics.addMany([trackGraphic, accuracyGraphic, gpsGraphic]);
-                } else {
-                  trackGraphic.geometry = new Polyline({
-                    paths: [trackPoints],
-                    spatialReference: { wkid: 4326 }
-                  });
-
-                  accuracyGraphic.geometry = new Circle({
-                    center: point,
-                    radius: Math.max(2, lastAccuracy),
-                    radiusUnit: "meters"
-                  });
-
-                  gpsGraphic.geometry = point;
-
-                  try {
-                    view.graphics.reorder(trackGraphic, 0);
-                    view.graphics.reorder(accuracyGraphic, 1);
-                    view.graphics.reorder(gpsGraphic, view.graphics.length - 1);
-                  } catch(e) {}
-                }
-              }
-
-              function lerp(a, b, t) {
-                return a + (b - a) * t;
-              }
-
-              function easeOutCubic(t) {
-                return 1 - Math.pow(1 - t, 3);
-              }
-
-              function roughDistanceMeters(lat1, lon1, lat2, lon2) {
-                const R = 6371000;
-                const toRad = x => x * Math.PI / 180;
-                const dLat = toRad(lat2 - lat1);
-                const dLon = toRad(lon2 - lon1);
-                const a =
-                  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
-                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-              }
-            </script>
-          </body>
-          </html>
-          EOF
-
-      - name: Build APK
-        run: gradle assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: skotselytor-gps-smooth-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+        });
+
+        headingGraphic = new Graphic({
+          geometry: point,
+          symbol: headingSymbol
+        });
+
+        gpsDotGraphic = new Graphic({
+          geometry: point,
+          symbol: dotSymbol
+        });
+
+        view.graphics.addMany([
+          trackHaloGraphic,
+          trackGraphic,
+          accuracyGraphic,
+          headingGraphic,
+          gpsDotGraphic
+        ]);
+      } else {
+        const lineGeometry = new Polyline({
+          paths: [trackPath],
+          spatialReference: { wkid: 4326 }
+        });
+
+        trackHaloGraphic.geometry = lineGeometry;
+        trackHaloGraphic.symbol = haloSymbol;
+
+        trackGraphic.geometry = lineGeometry;
+        trackGraphic.symbol = trackSymbol;
+
+        accuracyGraphic.geometry = new Circle({
+          center: point,
+          radius: Math.max(4, lastAccuracy),
+          radiusUnit: "meters"
+        });
+
+        headingGraphic.geometry = point;
+        headingGraphic.symbol = headingSymbol;
+
+        gpsDotGraphic.geometry = point;
+        gpsDotGraphic.symbol = dotSymbol;
+
+        bringGpsOverlayToTop();
+      }
+    }
+
+    function bringGpsOverlayToTop() {
+      try {
+        const n = view.graphics.graphics.length;
+        view.graphics.reorder(trackHaloGraphic, Math.max(0, n - 5));
+        view.graphics.reorder(trackGraphic, Math.max(0, n - 4));
+        view.graphics.reorder(accuracyGraphic, Math.max(0, n - 3));
+        view.graphics.reorder(headingGraphic, Math.max(0, n - 2));
+        view.graphics.reorder(gpsDotGraphic, Math.max(0, n - 1));
+      } catch(e) {}
+    }
+
+    function getTrackPath(lon, lat) {
+      if (trackPoints.length >= 2) {
+        return trackPoints;
+      }
+
+      if (trackPoints.length === 1) {
+        return [trackPoints[0], [lon, lat]];
+      }
+
+      return [[lon, lat], [lon, lat]];
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function roughDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const toRad = x => x * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function bearingDegrees(lat1, lon1, lat2, lon2) {
+      const toRad = x => x * Math.PI / 180;
+      const toDeg = x => x * 180 / Math.PI;
+
+      const phi1 = toRad(lat1);
+      const phi2 = toRad(lat2);
+      const deltaLon = toRad(lon2 - lon1);
+
+      const y = Math.sin(deltaLon) * Math.cos(phi2);
+      const x =
+        Math.cos(phi1) * Math.sin(phi2) -
+        Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLon);
+
+      return (toDeg(Math.atan2(y, x)) + 360) % 360;
+    }
+  </script>
+</body>
+</html>
