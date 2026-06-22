@@ -1,4 +1,4 @@
-name: Build Skötselytor GPS SMOOTH APK
+name: Build Skötselytor GPS CLEAN APK
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Create Android WebView GPS Smooth project
+      - name: Create Android WebView GPS Clean project
         run: |
           rm -rf app build.gradle settings.gradle
 
@@ -51,7 +51,7 @@ jobs:
               }
           }
 
-          rootProject.name = 'SkotselytorGpsSmooth'
+          rootProject.name = 'SkotselytorGpsClean'
           include ':app'
           EOF
 
@@ -74,15 +74,15 @@ jobs:
                   applicationId 'se.skotselytor.gpssmooth'
                   minSdk 26
                   targetSdk 35
-                  versionCode 2
-                  versionName 'GPS-SMOOTH-1.1'
+                  versionCode 3
+                  versionName 'GPS-CLEAN-1.2'
               }
           }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">Skötselytor GPS Smooth</string>
+              <string name="app_name">Skötselytor GPS Clean</string>
           </resources>
           EOF
 
@@ -105,7 +105,7 @@ jobs:
 
               <application
                   android:theme="@style/AppTheme"
-                  android:label="Skötselytor GPS Smooth"
+                  android:label="Skötselytor GPS Clean"
                   android:usesCleartextTraffic="true"
                   android:hardwareAccelerated="true"
                   android:allowBackup="false"
@@ -260,9 +260,9 @@ jobs:
           <head>
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-            <title>Skötselytor GPS Smooth</title>
+            <title>Skötselytor GPS Clean</title>
 
-            <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/dark/main.css">
+            <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css">
             <script src="https://js.arcgis.com/4.31/"></script>
 
             <style>
@@ -272,55 +272,122 @@ jobs:
                 height: 100%;
                 width: 100%;
                 overflow: hidden;
-                background: #050816;
+                background: #eef1f4;
                 font-family: Arial, sans-serif;
                 touch-action: none;
               }
 
               #panel {
                 position: absolute;
-                top: 12px;
-                left: 12px;
-                right: 12px;
+                top: 10px;
+                left: 10px;
                 z-index: 99;
-                background: rgba(5, 8, 22, 0.88);
+                background: rgba(17, 24, 39, 0.86);
                 color: white;
-                padding: 12px 14px;
-                border-radius: 14px;
-                font-size: 14px;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+                padding: 8px 11px;
+                border-radius: 15px;
+                font-size: 13px;
+                line-height: 1.25;
+                box-shadow: 0 8px 22px rgba(0,0,0,0.26);
                 pointer-events: none;
+                max-width: 300px;
+                backdrop-filter: blur(8px);
+              }
+
+              #panel .title {
+                font-size: 15px;
+                font-weight: 800;
+                margin-bottom: 2px;
               }
 
               #buttons {
                 position: absolute;
-                right: 14px;
-                bottom: 26px;
+                right: 12px;
+                bottom: 22px;
                 z-index: 99;
                 display: flex;
                 flex-direction: column;
-                gap: 10px;
+                gap: 9px;
               }
 
               button {
-                border: none;
-                border-radius: 999px;
-                padding: 15px 18px;
-                font-size: 16px;
-                font-weight: bold;
-                background: #2ecc71;
-                color: #07110b;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-              }
-
-              button.off {
-                background: #d8dde6;
+                border: 1px solid rgba(0,0,0,0.12);
+                border-radius: 17px;
+                min-width: 78px;
+                height: 46px;
+                padding: 0 13px;
+                font-size: 14px;
+                font-weight: 800;
+                background: rgba(255,255,255,0.94);
                 color: #111827;
+                box-shadow: 0 7px 20px rgba(0,0,0,0.25);
               }
 
-              .ok { color: #7CFF9B; font-weight: bold; }
-              .bad { color: #FF7777; font-weight: bold; }
-              .warn { color: #FFD166; font-weight: bold; }
+              button.active {
+                background: #1a73e8;
+                color: white;
+                border-color: rgba(255,255,255,0.25);
+              }
+
+              .ok { color: #8cffab; font-weight: 800; }
+              .bad { color: #ff8585; font-weight: 800; }
+              .warn { color: #ffd166; font-weight: 800; }
+
+              #gpsMarker {
+                position: absolute;
+                width: 42px;
+                height: 42px;
+                z-index: 120;
+                pointer-events: none;
+                display: none;
+                left: 0;
+                top: 0;
+                transform-origin: center center;
+                will-change: left, top, transform;
+              }
+
+              .coneOuter {
+                position: absolute;
+                left: 50%;
+                top: 1px;
+                width: 22px;
+                height: 28px;
+                transform: translateX(-50%);
+                background: rgba(255,255,255,0.95);
+                clip-path: polygon(50% 0%, 90% 100%, 10% 100%);
+                opacity: 0;
+                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.20));
+              }
+
+              .coneInner {
+                position: absolute;
+                left: 50%;
+                top: 5px;
+                width: 15px;
+                height: 22px;
+                transform: translateX(-50%);
+                background: rgba(26,115,232,0.33);
+                clip-path: polygon(50% 0%, 90% 100%, 10% 100%);
+                opacity: 0;
+              }
+
+              #gpsMarker.hasHeading .coneOuter,
+              #gpsMarker.hasHeading .coneInner {
+                opacity: 1;
+              }
+
+              #gpsDot {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: 12px;
+                height: 12px;
+                transform: translate(-50%, -50%);
+                background: #1a73e8;
+                border: 3px solid white;
+                border-radius: 999px;
+                box-shadow: 0 2px 7px rgba(0,0,0,0.35);
+              }
             </style>
           </head>
 
@@ -328,15 +395,21 @@ jobs:
             <div id="viewDiv"></div>
 
             <div id="panel">
-              <div><b>Skötselytor GPS Smooth</b></div>
+              <div class="title">Skötselytor GPS</div>
               <div id="mapStatus">Karta: laddar...</div>
               <div id="gpsStatus">GPS: väntar...</div>
-              <div id="followStatus">Följning: låst</div>
+              <div id="followStatus">Följ: låst</div>
             </div>
 
             <div id="buttons">
-              <button id="followBtn">🔒 FÖLJ</button>
-              <button id="centerBtn">🎯 MITT</button>
+              <button id="followBtn" class="active">FÖLJ</button>
+              <button id="centerBtn">MITT</button>
+            </div>
+
+            <div id="gpsMarker">
+              <div class="coneOuter"></div>
+              <div class="coneInner"></div>
+              <div id="gpsDot"></div>
             </div>
 
             <script>
@@ -345,11 +418,10 @@ jobs:
               const followStatus = document.getElementById("followStatus");
               const followBtn = document.getElementById("followBtn");
               const centerBtn = document.getElementById("centerBtn");
+              const gpsMarker = document.getElementById("gpsMarker");
 
               let view;
 
-              let gpsDotGraphic;
-              let headingGraphic;
               let accuracyGraphic;
               let trackHaloGraphic;
               let trackGraphic;
@@ -367,8 +439,10 @@ jobs:
               let lastSpeed = 0;
               let lastHeadingDeg = 0;
               let hasHeading = false;
+              let deviceHeadingDeg = null;
 
               let trackPoints = [];
+              let cumulativeTrackMeters = 0;
 
               function setMapStatus(text, cls) {
                 mapStatus.innerHTML = "Karta: <span class='" + (cls || "") + "'>" + text + "</span>";
@@ -380,13 +454,13 @@ jobs:
 
               function updateFollowUi() {
                 if (followGps) {
-                  followBtn.textContent = "🔒 FÖLJ";
-                  followBtn.classList.remove("off");
-                  followStatus.innerHTML = "Följning: <span class='ok'>låst, zoom ändras inte</span>";
+                  followBtn.textContent = "FÖLJ";
+                  followBtn.classList.add("active");
+                  followStatus.innerHTML = "Följ: <span class='ok'>låst</span>";
                 } else {
-                  followBtn.textContent = "🔓 FRI";
-                  followBtn.classList.add("off");
-                  followStatus.innerHTML = "Följning: <span class='warn'>fri panorering/zoom</span>";
+                  followBtn.textContent = "FRI";
+                  followBtn.classList.remove("active");
+                  followStatus.innerHTML = "Följ: <span class='warn'>fri</span>";
                 }
               }
 
@@ -413,6 +487,8 @@ jobs:
               window.addEventListener("unhandledrejection", function(e) {
                 setMapStatus("Laddningsfel: " + e.reason, "bad");
               });
+
+              startCompass();
 
               require([
                 "esri/config",
@@ -484,35 +560,48 @@ jobs:
                     animStart = performance.now();
 
                     const dist = roughDistanceMeters(animFrom.lat, animFrom.lon, animTo.lat, animTo.lon);
-                    animDuration = Math.max(500, Math.min(1200, dist * 90));
+                    animDuration = Math.max(500, Math.min(1100, dist * 80));
                   }
 
                   if (lastRaw) {
                     const distRaw = roughDistanceMeters(lastRaw.lat, lastRaw.lon, lat, lon);
 
-                    if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && speed > 1.2) {
-                      lastHeadingDeg = gpsHeading;
-                      hasHeading = true;
-                    } else if (distRaw > 1.5) {
-                      lastHeadingDeg = bearingDegrees(lastRaw.lat, lastRaw.lon, lat, lon);
-                      hasHeading = true;
+                    if (distRaw >= 3 && distRaw < 80) {
+                      cumulativeTrackMeters += distRaw;
+                      trackPoints.push([lon, lat]);
                     }
 
-                    if (distRaw >= 3 && distRaw < 80) {
-                      trackPoints.push([lon, lat]);
+                    let chosenHeading = null;
+
+                    if (Number.isFinite(gpsHeading) && gpsHeading >= 0 && speed > 1.2) {
+                      chosenHeading = gpsHeading;
+                    } else if (speed <= 2.0 && deviceHeadingDeg !== null) {
+                      chosenHeading = deviceHeadingDeg;
+                    } else if (distRaw > 4) {
+                      chosenHeading = bearingDegrees(lastRaw.lat, lastRaw.lon, lat, lon);
+                    }
+
+                    if (chosenHeading !== null) {
+                      lastHeadingDeg = hasHeading ? smoothAngle(lastHeadingDeg, chosenHeading, 0.28) : chosenHeading;
+                      hasHeading = true;
                     }
                   } else {
                     trackPoints.push([lon, lat]);
+
+                    if (deviceHeadingDeg !== null) {
+                      lastHeadingDeg = deviceHeadingDeg;
+                      hasHeading = true;
+                    }
                   }
 
                   lastRaw = next;
 
                   if (acc <= 30) {
-                    setGpsStatus("bra ✅ " + acc + " m | " + speed.toFixed(1) + " km/h", "ok");
+                    setGpsStatus(acc + " m · " + speed.toFixed(1) + " km/h", "ok");
                   } else if (acc <= 80) {
-                    setGpsStatus("okej ⚠️ " + acc + " m | " + speed.toFixed(1) + " km/h", "warn");
+                    setGpsStatus(acc + " m · " + speed.toFixed(1) + " km/h", "warn");
                   } else {
-                    setGpsStatus("dålig precision ❌ " + acc + " m", "bad");
+                    setGpsStatus("dålig precision · " + acc + " m", "bad");
                   }
 
                 }, function(error) {
@@ -544,7 +633,8 @@ jobs:
                     lat: lerp(animFrom.lat, animTo.lat, eased)
                   };
 
-                  drawGps(displayPos.lon, displayPos.lat);
+                  drawMapOverlays(displayPos.lon, displayPos.lat);
+                  updateGpsDom(displayPos.lon, displayPos.lat);
 
                   if (followGps) {
                     view.center = {
@@ -557,7 +647,7 @@ jobs:
                 requestAnimationFrame(animationLoop);
               }
 
-              function drawGps(lon, lat) {
+              function drawMapOverlays(lon, lat) {
                 const Graphic = window.__ArcGIS.Graphic;
                 const Point = window.__ArcGIS.Point;
                 const Circle = window.__ArcGIS.Circle;
@@ -569,57 +659,27 @@ jobs:
                 });
 
                 const trackPath = getTrackPath(lon, lat);
+                const showTrack = cumulativeTrackMeters >= 8 && trackPath.length >= 2;
 
                 const haloSymbol = {
                   type: "simple-line",
-                  color: [255, 255, 255, 0.92],
-                  width: 10,
+                  color: showTrack ? [255, 255, 255, 0.82] : [255, 255, 255, 0],
+                  width: showTrack ? 6 : 1,
                   cap: "round",
                   join: "round"
                 };
 
                 const trackSymbol = {
                   type: "simple-line",
-                  color: [29, 122, 255, 1],
-                  width: 5,
+                  color: showTrack ? [26, 115, 232, 0.98] : [26, 115, 232, 0],
+                  width: showTrack ? 3 : 1,
                   cap: "round",
                   join: "round"
                 };
 
-                const headingSymbol = hasHeading ? {
-                  type: "simple-marker",
-                  style: "triangle",
-                  color: [29, 122, 255, 0.72],
-                  size: "28px",
-                  angle: lastHeadingDeg,
-                  outline: {
-                    color: [255, 255, 255, 0.9],
-                    width: 2
-                  }
-                } : {
-                  type: "simple-marker",
-                  style: "triangle",
-                  color: [29, 122, 255, 0],
-                  size: "28px",
-                  angle: lastHeadingDeg,
-                  outline: {
-                    color: [255, 255, 255, 0],
-                    width: 0
-                  }
-                };
+                const accuracyRadius = Math.min(Math.max(3, lastAccuracy), 22);
 
-                const dotSymbol = {
-                  type: "simple-marker",
-                  style: "circle",
-                  color: [29, 122, 255, 1],
-                  size: "14px",
-                  outline: {
-                    color: [255, 255, 255, 1],
-                    width: 3
-                  }
-                };
-
-                if (!gpsDotGraphic) {
+                if (!accuracyGraphic) {
                   trackHaloGraphic = new Graphic({
                     geometry: new Polyline({
                       paths: [trackPath],
@@ -639,35 +699,23 @@ jobs:
                   accuracyGraphic = new Graphic({
                     geometry: new Circle({
                       center: point,
-                      radius: Math.max(4, lastAccuracy),
+                      radius: accuracyRadius,
                       radiusUnit: "meters"
                     }),
                     symbol: {
                       type: "simple-fill",
-                      color: [29, 122, 255, 0.13],
+                      color: [26, 115, 232, 0.07],
                       outline: {
-                        color: [29, 122, 255, 0.45],
+                        color: [26, 115, 232, 0.24],
                         width: 1
                       }
                     }
                   });
 
-                  headingGraphic = new Graphic({
-                    geometry: point,
-                    symbol: headingSymbol
-                  });
-
-                  gpsDotGraphic = new Graphic({
-                    geometry: point,
-                    symbol: dotSymbol
-                  });
-
                   view.graphics.addMany([
                     trackHaloGraphic,
                     trackGraphic,
-                    accuracyGraphic,
-                    headingGraphic,
-                    gpsDotGraphic
+                    accuracyGraphic
                   ]);
                 } else {
                   const lineGeometry = new Polyline({
@@ -683,29 +731,46 @@ jobs:
 
                   accuracyGraphic.geometry = new Circle({
                     center: point,
-                    radius: Math.max(4, lastAccuracy),
+                    radius: accuracyRadius,
                     radiusUnit: "meters"
                   });
 
-                  headingGraphic.geometry = point;
-                  headingGraphic.symbol = headingSymbol;
-
-                  gpsDotGraphic.geometry = point;
-                  gpsDotGraphic.symbol = dotSymbol;
-
-                  bringGpsOverlayToTop();
+                  try {
+                    const n = view.graphics.length || 0;
+                    view.graphics.reorder(trackHaloGraphic, Math.max(0, n - 3));
+                    view.graphics.reorder(trackGraphic, Math.max(0, n - 2));
+                    view.graphics.reorder(accuracyGraphic, Math.max(0, n - 1));
+                  } catch(e) {}
                 }
               }
 
-              function bringGpsOverlayToTop() {
-                try {
-                  const n = view.graphics.length || 0;
-                  view.graphics.reorder(trackHaloGraphic, Math.max(0, n - 5));
-                  view.graphics.reorder(trackGraphic, Math.max(0, n - 4));
-                  view.graphics.reorder(accuracyGraphic, Math.max(0, n - 3));
-                  view.graphics.reorder(headingGraphic, Math.max(0, n - 2));
-                  view.graphics.reorder(gpsDotGraphic, Math.max(0, n - 1));
-                } catch(e) {}
+              function updateGpsDom(lon, lat) {
+                const Point = window.__ArcGIS.Point;
+
+                const point = new Point({
+                  longitude: lon,
+                  latitude: lat
+                });
+
+                const screen = view.toScreen(point);
+
+                if (!screen || !Number.isFinite(screen.x) || !Number.isFinite(screen.y)) {
+                  gpsMarker.style.display = "none";
+                  return;
+                }
+
+                gpsMarker.style.display = "block";
+                gpsMarker.style.left = screen.x + "px";
+                gpsMarker.style.top = screen.y + "px";
+
+                if (hasHeading) {
+                  gpsMarker.classList.add("hasHeading");
+                } else {
+                  gpsMarker.classList.remove("hasHeading");
+                }
+
+                const screenHeading = normalizeDeg(lastHeadingDeg - (view.rotation || 0));
+                gpsMarker.style.transform = "translate(-50%, -50%) rotate(" + screenHeading + "deg)";
               }
 
               function getTrackPath(lon, lat) {
@@ -720,12 +785,51 @@ jobs:
                 return [[lon, lat], [lon, lat]];
               }
 
+              function startCompass() {
+                function handleOrientation(e) {
+                  let heading = null;
+
+                  if (typeof e.webkitCompassHeading === "number") {
+                    heading = e.webkitCompassHeading;
+                  } else if (e.absolute === true && typeof e.alpha === "number") {
+                    heading = (360 - e.alpha) % 360;
+                  }
+
+                  if (heading !== null && Number.isFinite(heading)) {
+                    deviceHeadingDeg = deviceHeadingDeg === null
+                      ? heading
+                      : smoothAngle(deviceHeadingDeg, heading, 0.18);
+
+                    if (lastSpeed < 2.0) {
+                      lastHeadingDeg = hasHeading
+                        ? smoothAngle(lastHeadingDeg, deviceHeadingDeg, 0.18)
+                        : deviceHeadingDeg;
+                      hasHeading = true;
+                    }
+                  }
+                }
+
+                try {
+                  window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+                  window.addEventListener("deviceorientation", handleOrientation, true);
+                } catch(e) {}
+              }
+
               function lerp(a, b, t) {
                 return a + (b - a) * t;
               }
 
               function easeOutCubic(t) {
                 return 1 - Math.pow(1 - t, 3);
+              }
+
+              function normalizeDeg(deg) {
+                return ((deg % 360) + 360) % 360;
+              }
+
+              function smoothAngle(from, to, amount) {
+                const diff = ((to - from + 540) % 360) - 180;
+                return normalizeDeg(from + diff * amount);
               }
 
               function roughDistanceMeters(lat1, lon1, lat2, lon2) {
@@ -753,7 +857,7 @@ jobs:
                   Math.cos(phi1) * Math.sin(phi2) -
                   Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLon);
 
-                return (toDeg(Math.atan2(y, x)) + 360) % 360;
+                return normalizeDeg(toDeg(Math.atan2(y, x)));
               }
             </script>
           </body>
@@ -766,5 +870,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: skotselytor-gps-smooth-apk
+          name: skotselytor-gps-clean-apk
           path: app/build/outputs/apk/debug/app-debug.apk
