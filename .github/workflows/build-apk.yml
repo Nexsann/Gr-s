@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 13
-                  versionName 'GPS-FOLLOW-TRACKUP-1.12'
+                  versionCode 14
+                  versionName 'GPS-FOLLOW-TRACKUP-1.13'
               }
           }
           EOF
@@ -416,6 +416,57 @@ jobs:
               .warn { color: #ffd166; font-weight: 800; }
               .bad { color: #ff8585; font-weight: 800; }
 
+              #searchToggle {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                z-index: 150;
+                width: 52px;
+                height: 52px;
+                border-radius: 16px;
+                border: 1px solid rgba(0,0,0,0.12);
+                background: rgba(255,255,255,0.96);
+                color: #111827;
+                font-size: 25px;
+                font-weight: 900;
+                box-shadow: 0 6px 18px rgba(0,0,0,0.24);
+              }
+
+              #searchToggle.active {
+                background: #1a73e8;
+                color: white;
+              }
+
+              #searchFloat {
+                position: absolute;
+                top: 178px;
+                left: 10px;
+                right: 10px;
+                z-index: 149;
+                display: none;
+                background: rgba(18, 24, 33, 0.86);
+                border-radius: 16px;
+                padding: 8px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+              }
+
+              #searchFloat.open {
+                display: block;
+              }
+
+              #searchWidget {
+                width: 100%;
+              }
+
+              #searchWidget .esri-search {
+                width: 100% !important;
+              }
+
+              #searchWidget .esri-search__container {
+                border-radius: 12px !important;
+                overflow: hidden !important;
+              }
+
               #buttons {
                 position: absolute;
                 right: 12px;
@@ -528,21 +579,6 @@ jobs:
                   0 0 0 1px rgba(0,0,0,0.06);
               }
 
-              .esri-ui-top-right {
-                top: 10px !important;
-                right: 10px !important;
-              }
-
-              .esri-expand__content {
-                border-radius: 14px !important;
-                overflow: hidden !important;
-                box-shadow: 0 8px 22px rgba(0,0,0,0.25) !important;
-              }
-
-              .esri-search {
-                width: min(82vw, 330px) !important;
-              }
-
               .esri-ui-bottom-right {
                 bottom: 4px !important;
               }
@@ -558,6 +594,12 @@ jobs:
               <div id="gpsStatus">GPS: väntar...</div>
               <div id="followStatus">Följ: laddar område</div>
               <div id="searchStatus">Sök: laddar...</div>
+            </div>
+
+            <button id="searchToggle">⌕</button>
+
+            <div id="searchFloat">
+              <div id="searchWidget"></div>
             </div>
 
             <div id="buttons">
@@ -580,6 +622,8 @@ jobs:
               const searchStatus = document.getElementById("searchStatus");
               const followBtn = document.getElementById("followBtn");
               const centerBtn = document.getElementById("centerBtn");
+              const searchToggle = document.getElementById("searchToggle");
+              const searchFloat = document.getElementById("searchFloat");
               const gpsOverlay = document.getElementById("gpsOverlay");
               const accuracyDom = document.getElementById("accuracyDom");
               const markerRotator = document.getElementById("markerRotator");
@@ -648,6 +692,24 @@ jobs:
                 updateFollowUi();
               }
 
+              function toggleSearchBox(force) {
+                const open = typeof force === "boolean"
+                  ? force
+                  : !searchFloat.classList.contains("open");
+
+                if (open) {
+                  searchFloat.classList.add("open");
+                  searchToggle.classList.add("active");
+                } else {
+                  searchFloat.classList.remove("open");
+                  searchToggle.classList.remove("active");
+                }
+              }
+
+              searchToggle.onclick = function() {
+                toggleSearchBox();
+              };
+
               followBtn.onclick = function() {
                 followGps = !followGps;
                 updateFollowUi();
@@ -681,9 +743,8 @@ jobs:
                 "esri/Graphic",
                 "esri/geometry/Polyline",
                 "esri/geometry/Point",
-                "esri/widgets/Search",
-                "esri/widgets/Expand"
-              ], function(esriConfig, WebMap, MapView, Graphic, Polyline, Point, Search, Expand) {
+                "esri/widgets/Search"
+              ], function(esriConfig, WebMap, MapView, Graphic, Polyline, Point, Search) {
                 esriConfig.portalUrl = "https://kartor.linkoping.se/portal";
 
                 const webmap = new WebMap({
@@ -709,7 +770,7 @@ jobs:
 
                 view.when(function() {
                   setMapStatus("laddad", "ok");
-                  setupSearch(Search, Expand);
+                  setupSearch(Search);
                   startGps();
                   requestAnimationFrame(loop);
                 }).catch(function(error) {
@@ -717,7 +778,7 @@ jobs:
                 });
               });
 
-              async function setupSearch(Search, Expand) {
+              async function setupSearch(Search) {
                 try {
                   setSearchStatus("förbereder", "warn");
 
@@ -725,6 +786,7 @@ jobs:
 
                   const search = new Search({
                     view: view,
+                    container: "searchWidget",
                     includeDefaultSources: sources.length === 0,
                     allPlaceholder: "Sök nummer...",
                     locationEnabled: false,
@@ -766,17 +828,11 @@ jobs:
                     preloadUntil = 0;
                     updateFollowUi();
                     setSearchStatus("vald träff", "ok");
-                  });
 
-                  const expand = new Expand({
-                    view: view,
-                    content: search,
-                    expanded: false,
-                    mode: "floating",
-                    expandIcon: "search"
+                    setTimeout(function() {
+                      toggleSearchBox(false);
+                    }, 450);
                   });
-
-                  view.ui.add(expand, "top-right");
 
                   if (sources.length > 0) {
                     setSearchStatus(sources.length + " källor", "ok");
