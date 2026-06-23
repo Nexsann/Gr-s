@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 14
-                  versionName 'GPS-FOLLOW-TRACKUP-1.13'
+                  versionCode 15
+                  versionName 'GPS-FOLLOW-TRACKUP-1.14-NEXT-TID'
               }
           }
           EOF
@@ -471,7 +471,7 @@ jobs:
                 position: absolute;
                 right: 12px;
                 bottom: 22px;
-                z-index: 100;
+                z-index: 160;
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
@@ -494,6 +494,136 @@ jobs:
                 background: #1a73e8;
                 color: white;
                 border-color: rgba(255,255,255,0.25);
+              }
+
+              #nextPanel {
+                position: absolute;
+                left: 10px;
+                right: 96px;
+                bottom: 22px;
+                z-index: 155;
+                display: none;
+                max-height: 60vh;
+                overflow-y: auto;
+                background: rgba(18, 24, 33, 0.95);
+                color: white;
+                border-radius: 18px;
+                padding: 10px;
+                box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+              }
+
+              #nextPanel.open {
+                display: block;
+              }
+
+              #nextPanelTitle {
+                font-size: 15px;
+                font-weight: 900;
+                margin-bottom: 8px;
+              }
+
+              #nextAreaSelect {
+                width: 100%;
+                height: 42px;
+                border-radius: 14px;
+                border: 1px solid rgba(255,255,255,0.18);
+                background: rgba(255,255,255,0.96);
+                color: #111827;
+                font-size: 14px;
+                font-weight: 800;
+                padding: 0 8px;
+                margin-bottom: 8px;
+              }
+
+              #nextTimeChoices {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 6px;
+                margin-bottom: 8px;
+              }
+
+              #nextTimeChoices button {
+                min-width: 0;
+                height: 38px;
+                border-radius: 13px;
+                font-size: 12px;
+              }
+
+              #nextAddBtn {
+                width: 100%;
+                height: 42px;
+                background: #22c55e;
+                color: #052e16;
+                margin-bottom: 8px;
+              }
+
+              #nextReportList {
+                background: rgba(255,255,255,0.07);
+                border-radius: 13px;
+                overflow: hidden;
+                margin-bottom: 8px;
+              }
+
+              .nextReportRow {
+                padding: 8px;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                font-size: 12px;
+              }
+
+              .nextReportRow:last-child {
+                border-bottom: none;
+              }
+
+              .nextReportTop {
+                display: flex;
+                justify-content: space-between;
+                gap: 8px;
+                font-weight: 900;
+              }
+
+              .nextReportCode {
+                opacity: 0.82;
+                margin-top: 2px;
+              }
+
+              .nextDeleteBtn {
+                min-width: auto;
+                height: 28px;
+                border-radius: 10px;
+                padding: 0 8px;
+                font-size: 11px;
+                background: rgba(239,68,68,0.9);
+                color: white;
+              }
+
+              #nextTotal {
+                font-size: 14px;
+                font-weight: 900;
+                margin-bottom: 8px;
+              }
+
+              #nextActions {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px;
+              }
+
+              #nextCopyBtn,
+              #nextClearBtn {
+                min-width: 0;
+                height: 38px;
+                border-radius: 13px;
+                font-size: 12px;
+              }
+
+              #nextCopyBtn {
+                background: #1a73e8;
+                color: white;
+              }
+
+              #nextClearBtn {
+                background: #991b1b;
+                color: white;
               }
 
               #gpsOverlay {
@@ -605,6 +735,33 @@ jobs:
             <div id="buttons">
               <button id="followBtn" class="active">FÖLJ</button>
               <button id="centerBtn">MITT</button>
+              <button id="nextBtn">NEXT</button>
+            </div>
+
+            <div id="nextPanel">
+              <div id="nextPanelTitle">Enkel tidsrapport</div>
+
+              <select id="nextAreaSelect"></select>
+
+              <div id="nextTimeChoices">
+                <button class="nextTimeBtn" data-min="15">15 min</button>
+                <button class="nextTimeBtn" data-min="30">30 min</button>
+                <button class="nextTimeBtn" data-min="45">45 min</button>
+                <button class="nextTimeBtn active" data-min="60">1 h</button>
+                <button class="nextTimeBtn" data-min="90">1.5 h</button>
+                <button class="nextTimeBtn" data-min="120">2 h</button>
+              </div>
+
+              <button id="nextAddBtn">LÄGG TILL</button>
+
+              <div id="nextReportList"></div>
+
+              <div id="nextTotal">Totalt idag: 0 h</div>
+
+              <div id="nextActions">
+                <button id="nextCopyBtn">KOPIERA</button>
+                <button id="nextClearBtn">RENSA</button>
+              </div>
             </div>
 
             <div id="gpsOverlay">
@@ -627,6 +784,15 @@ jobs:
               const gpsOverlay = document.getElementById("gpsOverlay");
               const accuracyDom = document.getElementById("accuracyDom");
               const markerRotator = document.getElementById("markerRotator");
+
+              const nextBtn = document.getElementById("nextBtn");
+              const nextPanel = document.getElementById("nextPanel");
+              const nextAreaSelect = document.getElementById("nextAreaSelect");
+              const nextAddBtn = document.getElementById("nextAddBtn");
+              const nextReportList = document.getElementById("nextReportList");
+              const nextTotal = document.getElementById("nextTotal");
+              const nextCopyBtn = document.getElementById("nextCopyBtn");
+              const nextClearBtn = document.getElementById("nextClearBtn");
 
               let view;
 
@@ -729,6 +895,7 @@ jobs:
               };
 
               updateFollowUi();
+              setupNextTimeReport();
 
               window.addEventListener("error", function(e) {
                 setMapStatus("JS-fel: " + e.message, "bad");
@@ -1336,6 +1503,213 @@ jobs:
                   lat: lat + dLat * 180 / Math.PI,
                   lon: lon + dLon * 180 / Math.PI
                 };
+              }
+
+              function setupNextTimeReport() {
+                const NEXT_AREAS = [
+                  { area: "Innerstaden", district: "Staden 1111", object: "10600" },
+                  { area: "Kungsgateområdet", district: "Staden 1112", object: "10601" },
+                  { area: "Övre Vasastaden", district: "Staden 1113", object: "10602" },
+                  { area: "Vasastaden", district: "Staden 1114", object: "10603" },
+                  { area: "Opphemsgatan, Västgötagatan", district: "Staden 1221", object: "10604" },
+                  { area: "Konsistoriegatan, Vasavägen, Östgötagatan", district: "Staden 1221", object: "10604" },
+                  { area: "Barfotegatan, Hunnebergsgatan", district: "Staden 1221", object: "10604" },
+                  { area: "T1, Ebbepark", district: "Staden 1222", object: "10605" },
+                  { area: "T1, Eskadern", district: "Staden 1223", object: "10606" },
+                  { area: "Gottfridsberg", district: "Staden 1224", object: "10607" },
+
+                  { area: "Södra Majelden, Prästbolsg", district: "Stångån 2331", object: "10610" },
+                  { area: "Pionjärgatan, Södra Ekkällan", district: "Stångån 2332", object: "10611" },
+                  { area: "Norra Majelden", district: "Stångån 2333", object: "10612" },
+                  { area: "Ekängen, Linghem", district: "Stångån 2333", object: "10612" },
+                  { area: "Knektg, Luftvärnsg", district: "Stångån 2334", object: "10613" },
+
+                  { area: "Johannelund", district: "Stångån 2441", object: "10614" },
+                  { area: "Hejdegården, Emriksgatan mm", district: "Stångån 2442", object: "10615" },
+                  { area: "Stolplyckan, Magistratshagen", district: "Stångån 2443", object: "10616" },
+                  { area: "Barnhemsgatan, Elsa Brändströmsgatan", district: "Stångån 2443", object: "10616" },
+                  { area: "Jakobsdal", district: "Stångån 2444", object: "10617" },
+                  { area: "Snickaregatan/Folkungallen", district: "Stångån 2444", object: "10617" },
+                  { area: "Blästad, Vidingsjö, Ullstämma", district: "Stångån 2444", object: "10617" },
+
+                  { area: "Åbylund", district: "Slätten 3551", object: "10620" },
+                  { area: "Ryd", district: "Slätten 3552", object: "10621" },
+                  { area: "Vikingstad", district: "Slätten 3553", object: "10622" },
+                  { area: "Västra Valla", district: "Slätten 3553", object: "10622" },
+                  { area: "Valla/Fridhem", district: "Slätten 3553", object: "10622" },
+                  { area: "Ryd, Ryd centrum", district: "Slätten 3554", object: "10623" },
+                  { area: "Lambohov, Djurgården", district: "Slätten 3661", object: "10624" },
+                  { area: "Lambohov, Mjärdevi", district: "Slätten 3662", object: "10625" }
+                ];
+
+                let selectedMinutes = 60;
+
+                function todayKey() {
+                  const d = new Date();
+                  const yyyy = d.getFullYear();
+                  const mm = String(d.getMonth() + 1).padStart(2, "0");
+                  const dd = String(d.getDate()).padStart(2, "0");
+                  return "next_time_report_" + yyyy + "-" + mm + "-" + dd;
+                }
+
+                function todayText() {
+                  const d = new Date();
+                  const yyyy = d.getFullYear();
+                  const mm = String(d.getMonth() + 1).padStart(2, "0");
+                  const dd = String(d.getDate()).padStart(2, "0");
+                  return yyyy + "-" + mm + "-" + dd;
+                }
+
+                function loadEntries() {
+                  try {
+                    return JSON.parse(localStorage.getItem(todayKey()) || "[]");
+                  } catch(e) {
+                    return [];
+                  }
+                }
+
+                function saveEntries(entries) {
+                  localStorage.setItem(todayKey(), JSON.stringify(entries));
+                }
+
+                function formatMinutes(min) {
+                  const h = Math.floor(min / 60);
+                  const m = min % 60;
+
+                  if (h > 0 && m > 0) return h + " h " + m + " min";
+                  if (h > 0) return h + " h";
+                  return m + " min";
+                }
+
+                function fillAreaSelect() {
+                  nextAreaSelect.innerHTML = "";
+
+                  NEXT_AREAS.forEach(function(item, index) {
+                    const option = document.createElement("option");
+                    option.value = String(index);
+                    option.textContent = item.area + " | " + item.district + " | " + item.object;
+                    nextAreaSelect.appendChild(option);
+                  });
+
+                  const johannelundIndex = NEXT_AREAS.findIndex(function(item) {
+                    return item.area === "Johannelund";
+                  });
+
+                  if (johannelundIndex >= 0) {
+                    nextAreaSelect.value = String(johannelundIndex);
+                  }
+                }
+
+                function renderReport() {
+                  const entries = loadEntries();
+                  nextReportList.innerHTML = "";
+
+                  let total = 0;
+
+                  entries.forEach(function(entry, index) {
+                    total += entry.minutes;
+
+                    const row = document.createElement("div");
+                    row.className = "nextReportRow";
+
+                    row.innerHTML =
+                      "<div class='nextReportTop'>" +
+                        "<div>" + formatMinutes(entry.minutes) + " · " + entry.area + "</div>" +
+                        "<button class='nextDeleteBtn' data-index='" + index + "'>X</button>" +
+                      "</div>" +
+                      "<div class='nextReportCode'>" + entry.district + " · " + entry.object + "</div>";
+
+                    nextReportList.appendChild(row);
+                  });
+
+                  nextTotal.textContent = "Totalt idag: " + formatMinutes(total);
+
+                  nextReportList.querySelectorAll(".nextDeleteBtn").forEach(function(btn) {
+                    btn.onclick = function() {
+                      const idx = Number(btn.dataset.index);
+                      const current = loadEntries();
+                      current.splice(idx, 1);
+                      saveEntries(current);
+                      renderReport();
+                    };
+                  });
+                }
+
+                document.querySelectorAll(".nextTimeBtn").forEach(function(btn) {
+                  btn.onclick = function() {
+                    document.querySelectorAll(".nextTimeBtn").forEach(function(b) {
+                      b.classList.remove("active");
+                    });
+
+                    btn.classList.add("active");
+                    selectedMinutes = Number(btn.dataset.min);
+                  };
+                });
+
+                nextBtn.onclick = function() {
+                  nextPanel.classList.toggle("open");
+                  nextBtn.classList.toggle("active");
+                  renderReport();
+                };
+
+                nextAddBtn.onclick = function() {
+                  const item = NEXT_AREAS[Number(nextAreaSelect.value)];
+
+                  if (!item) {
+                    alert("Välj område först.");
+                    return;
+                  }
+
+                  const entries = loadEntries();
+
+                  entries.push({
+                    area: item.area,
+                    district: item.district,
+                    object: item.object,
+                    minutes: selectedMinutes,
+                    createdAt: new Date().toISOString()
+                  });
+
+                  saveEntries(entries);
+                  renderReport();
+                };
+
+                nextCopyBtn.onclick = async function() {
+                  const entries = loadEntries();
+
+                  if (!entries.length) {
+                    alert("Det finns inget att kopiera idag.");
+                    return;
+                  }
+
+                  let total = 0;
+
+                  const lines = entries.map(function(entry) {
+                    total += entry.minutes;
+                    return entry.area + " - " + entry.district + " - " + entry.object + " - " + formatMinutes(entry.minutes);
+                  });
+
+                  const text =
+                    "Tidsrapport " + todayText() + "\n\n" +
+                    lines.join("\n") +
+                    "\n\nTotalt: " + formatMinutes(total);
+
+                  try {
+                    await navigator.clipboard.writeText(text);
+                    alert("Tidsrapport kopierad.");
+                  } catch(e) {
+                    prompt("Kopiera rapporten här:", text);
+                  }
+                };
+
+                nextClearBtn.onclick = function() {
+                  if (!confirm("Rensa dagens tidsrapport?")) return;
+                  saveEntries([]);
+                  renderReport();
+                };
+
+                fillAreaSelect();
+                renderReport();
               }
 
               function lerp(a, b, t) {
