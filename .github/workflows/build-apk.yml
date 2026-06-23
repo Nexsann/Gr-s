@@ -74,8 +74,8 @@ jobs:
                   applicationId 'se.skotselytor.gps'
                   minSdk 26
                   targetSdk 35
-                  versionCode 15
-                  versionName 'GPS-FOLLOW-TRACKUP-1.14-NEXT-TID'
+                  versionCode 16
+                  versionName 'GPS-FOLLOW-TRACKUP-1.15-BG-TRACK'
               }
           }
           EOF
@@ -102,6 +102,10 @@ jobs:
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
 
               <application
                   android:theme="@style/AppTheme"
@@ -120,6 +124,12 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+
+                  <service
+                      android:name=".BackgroundLocationService"
+                      android:enabled="true"
+                      android:exported="false"
+                      android:foregroundServiceType="location" />
               </application>
           </manifest>
           EOF
@@ -131,6 +141,8 @@ jobs:
           import android.app.Activity;
           import android.os.Bundle;
           import android.os.Build;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
           import android.hardware.Sensor;
           import android.hardware.SensorEvent;
@@ -151,6 +163,7 @@ jobs:
           public class MainActivity extends Activity implements SensorEventListener {
               private WebView webView;
               private static final int LOCATION_REQUEST = 1001;
+              private static final int NOTIFICATION_REQUEST = 1002;
 
               private SensorManager sensorManager;
               private Sensor rotationVectorSensor;
@@ -194,6 +207,7 @@ jobs:
                   }
 
                   requestLocationPermissionIfNeeded();
+                  requestNotificationPermissionIfNeeded();
 
                   webView = new WebView(this);
                   webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
@@ -212,6 +226,7 @@ jobs:
                   settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
                   webView.addJavascriptInterface(new SensorBridge(), "AndroidSensors");
+                  webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
 
                   webView.setWebViewClient(new WebViewClient());
 
@@ -317,6 +332,58 @@ jobs:
                   }
               }
 
+              public class AndroidBridge {
+                  @JavascriptInterface
+                  public void startBackgroundTracking() {
+                      try {
+                          Intent intent = new Intent(MainActivity.this, BackgroundLocationService.class);
+                          intent.setAction("START");
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              startForegroundService(intent);
+                          } else {
+                              startService(intent);
+                          }
+                      } catch (Throwable ignored) {}
+                  }
+
+                  @JavascriptInterface
+                  public void stopBackgroundTracking() {
+                      try {
+                          Intent intent = new Intent(MainActivity.this, BackgroundLocationService.class);
+                          intent.setAction("STOP");
+                          startService(intent);
+                      } catch (Throwable ignored) {}
+                  }
+
+                  @JavascriptInterface
+                  public boolean isBackgroundTracking() {
+                      try {
+                          SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                          return prefs.getBoolean("background_tracking", false);
+                      } catch (Throwable ignored) {
+                          return false;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public String getNativeTrack() {
+                      try {
+                          SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                          return prefs.getString("native_track", "[]");
+                      } catch (Throwable ignored) {
+                          return "[]";
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public void clearNativeTrack() {
+                      try {
+                          SharedPreferences prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                          prefs.edit().putString("native_track", "[]").apply();
+                      } catch (Throwable ignored) {}
+                  }
+              }
+
               private void requestLocationPermissionIfNeeded() {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                       if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -328,6 +395,19 @@ jobs:
                               LOCATION_REQUEST
                           );
                       }
+                  }
+              }
+
+              private void requestNotificationPermissionIfNeeded() {
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      try {
+                          if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                              requestPermissions(
+                                  new String[] { Manifest.permission.POST_NOTIFICATIONS },
+                                  NOTIFICATION_REQUEST
+                              );
+                          }
+                      } catch (Throwable ignored) {}
                   }
               }
 
@@ -364,6 +444,246 @@ jobs:
                       super.onBackPressed();
                   }
               }
+          }
+          EOF
+
+          cat > app/src/main/java/se/skotselytor/gps/BackgroundLocationService.java <<'EOF'
+          package se.skotselytor.gps;
+
+          import android.Manifest;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.location.Location;
+          import android.location.LocationListener;
+          import android.location.LocationManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.IBinder;
+          import android.os.PowerManager;
+
+          import org.json.JSONArray;
+
+          public class BackgroundLocationService extends Service implements LocationListener {
+              private static final String CHANNEL_ID = "skotselytor_gps_tracking";
+              private static final int NOTIFICATION_ID = 2401;
+
+              private LocationManager locationManager;
+              private PowerManager.WakeLock wakeLock;
+              private SharedPreferences prefs;
+
+              private Location lastSavedLocation = null;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  prefs = getSharedPreferences("skotselytor_native", MODE_PRIVATE);
+                  locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+                  try {
+                      PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                      if (pm != null) {
+                          wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SkotselytorGPS:TrackingWakeLock");
+                          wakeLock.setReferenceCounted(false);
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  String action = intent != null ? intent.getAction() : "START";
+
+                  if ("STOP".equals(action)) {
+                      stopTracking();
+                      stopSelf();
+                      return START_NOT_STICKY;
+                  }
+
+                  startTracking();
+                  return START_STICKY;
+              }
+
+              private void startTracking() {
+                  try {
+                      createNotificationChannel();
+                      startForeground(NOTIFICATION_ID, buildNotification());
+
+                      prefs.edit().putBoolean("background_tracking", true).apply();
+
+                      if (wakeLock != null && !wakeLock.isHeld()) {
+                          wakeLock.acquire();
+                      }
+
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                          if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+                              checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                              return;
+                          }
+                      }
+
+                      if (locationManager != null) {
+                          try {
+                              locationManager.requestLocationUpdates(
+                                  LocationManager.GPS_PROVIDER,
+                                  2500,
+                                  2.5f,
+                                  this
+                              );
+                          } catch (Throwable ignored) {}
+
+                          try {
+                              locationManager.requestLocationUpdates(
+                                  LocationManager.NETWORK_PROVIDER,
+                                  5000,
+                                  5.0f,
+                                  this
+                              );
+                          } catch (Throwable ignored) {}
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              private void stopTracking() {
+                  try {
+                      prefs.edit().putBoolean("background_tracking", false).apply();
+
+                      if (locationManager != null) {
+                          locationManager.removeUpdates(this);
+                      }
+
+                      if (wakeLock != null && wakeLock.isHeld()) {
+                          wakeLock.release();
+                      }
+
+                      stopForeground(true);
+                  } catch (Throwable ignored) {}
+              }
+
+              @Override
+              public void onDestroy() {
+                  stopTracking();
+                  super.onDestroy();
+              }
+
+              @Override
+              public void onLocationChanged(Location location) {
+                  if (location == null) return;
+
+                  try {
+                      if (location.hasAccuracy() && location.getAccuracy() > 80f) return;
+
+                      if (lastSavedLocation != null) {
+                          float jump = lastSavedLocation.distanceTo(location);
+                          if (jump > 120f) {
+                              lastSavedLocation = location;
+                              saveLocation(location);
+                              return;
+                          }
+
+                          if (jump < 2.0f) {
+                              return;
+                          }
+                      }
+
+                      lastSavedLocation = location;
+                      saveLocation(location);
+                  } catch (Throwable ignored) {}
+              }
+
+              private void saveLocation(Location location) {
+                  try {
+                      String raw = prefs.getString("native_track", "[]");
+                      JSONArray arr;
+
+                      try {
+                          arr = new JSONArray(raw);
+                      } catch (Throwable e) {
+                          arr = new JSONArray();
+                      }
+
+                      JSONArray point = new JSONArray();
+                      point.put(location.getLongitude());
+                      point.put(location.getLatitude());
+                      point.put(location.hasAccuracy() ? location.getAccuracy() : 0);
+                      point.put(location.getTime());
+
+                      arr.put(point);
+
+                      int max = 25000;
+                      if (arr.length() > max) {
+                          JSONArray trimmed = new JSONArray();
+                          for (int i = arr.length() - max; i < arr.length(); i++) {
+                              trimmed.put(arr.get(i));
+                          }
+                          arr = trimmed;
+                      }
+
+                      prefs.edit().putString("native_track", arr.toString()).apply();
+                  } catch (Throwable ignored) {}
+              }
+
+              private void createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      NotificationChannel channel = new NotificationChannel(
+                          CHANNEL_ID,
+                          "Skötselytor GPS-spårning",
+                          NotificationManager.IMPORTANCE_LOW
+                      );
+
+                      channel.setDescription("Visar när Skötselytor GPS spårar i bakgrunden.");
+
+                      NotificationManager manager = getSystemService(NotificationManager.class);
+                      if (manager != null) {
+                          manager.createNotificationChannel(channel);
+                      }
+                  }
+              }
+
+              private Notification buildNotification() {
+                  Intent openIntent = new Intent(this, MainActivity.class);
+                  openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+                  PendingIntent pendingIntent = PendingIntent.getActivity(
+                      this,
+                      0,
+                      openIntent,
+                      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                          ? PendingIntent.FLAG_IMMUTABLE
+                          : 0
+                  );
+
+                  Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                      ? new Notification.Builder(this, CHANNEL_ID)
+                      : new Notification.Builder(this);
+
+                  builder
+                      .setContentTitle("Skötselytor GPS spårar")
+                      .setContentText("GPS-snöret sparas i bakgrunden.")
+                      .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                      .setContentIntent(pendingIntent)
+                      .setOngoing(true);
+
+                  return builder.build();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              @Override
+              public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+              @Override
+              public void onProviderEnabled(String provider) {}
+
+              @Override
+              public void onProviderDisabled(String provider) {}
           }
           EOF
 
@@ -494,6 +814,11 @@ jobs:
                 background: #1a73e8;
                 color: white;
                 border-color: rgba(255,255,255,0.25);
+              }
+
+              #bgTrackBtn.active {
+                background: #22c55e;
+                color: #052e16;
               }
 
               #nextPanel {
@@ -724,6 +1049,7 @@ jobs:
               <div id="gpsStatus">GPS: väntar...</div>
               <div id="followStatus">Följ: laddar område</div>
               <div id="searchStatus">Sök: laddar...</div>
+              <div id="bgStatus">Spårning: av</div>
             </div>
 
             <button id="searchToggle">⌕</button>
@@ -735,6 +1061,7 @@ jobs:
             <div id="buttons">
               <button id="followBtn" class="active">FÖLJ</button>
               <button id="centerBtn">MITT</button>
+              <button id="bgTrackBtn">SPÅRA</button>
               <button id="nextBtn">NEXT</button>
             </div>
 
@@ -777,8 +1104,11 @@ jobs:
               const gpsStatus = document.getElementById("gpsStatus");
               const followStatus = document.getElementById("followStatus");
               const searchStatus = document.getElementById("searchStatus");
+              const bgStatus = document.getElementById("bgStatus");
+
               const followBtn = document.getElementById("followBtn");
               const centerBtn = document.getElementById("centerBtn");
+              const bgTrackBtn = document.getElementById("bgTrackBtn");
               const searchToggle = document.getElementById("searchToggle");
               const searchFloat = document.getElementById("searchFloat");
               const gpsOverlay = document.getElementById("gpsOverlay");
@@ -800,6 +1130,7 @@ jobs:
               let trackLineGraphic = null;
 
               let followGps = true;
+              let bgTracking = false;
 
               let displayPos = null;
               let targetPos = null;
@@ -817,6 +1148,9 @@ jobs:
               let lastTrackPoint = null;
               let totalTrackMeters = 0;
 
+              let nativeSeenTimes = {};
+              let lastNativePoint = null;
+
               let lastFollowAt = 0;
               let preloadUntil = 0;
 
@@ -830,6 +1164,10 @@ jobs:
 
               function setSearchStatus(text, cls) {
                 searchStatus.innerHTML = "Sök: <span class='" + cls + "'>" + text + "</span>";
+              }
+
+              function setBgStatus(text, cls) {
+                bgStatus.innerHTML = "Spårning: <span class='" + cls + "'>" + text + "</span>";
               }
 
               function updateFollowUi() {
@@ -846,6 +1184,18 @@ jobs:
                   followBtn.textContent = "FRI";
                   followBtn.classList.remove("active");
                   followStatus.innerHTML = "Följ: <span class='warn'>fri</span>";
+                }
+              }
+
+              function updateBgUi() {
+                if (bgTracking) {
+                  bgTrackBtn.classList.add("active");
+                  bgTrackBtn.textContent = "SPÅRAR";
+                  setBgStatus("på", "ok");
+                } else {
+                  bgTrackBtn.classList.remove("active");
+                  bgTrackBtn.textContent = "SPÅRA";
+                  setBgStatus("av", "warn");
                 }
               }
 
@@ -894,11 +1244,42 @@ jobs:
                 }
               };
 
+              bgTrackBtn.onclick = function() {
+                try {
+                  if (typeof AndroidBridge === "undefined") {
+                    alert("Bakgrundsspårning stöds bara i APK-appen.");
+                    return;
+                  }
+
+                  if (bgTracking) {
+                    AndroidBridge.stopBackgroundTracking();
+                    bgTracking = false;
+                  } else {
+                    AndroidBridge.startBackgroundTracking();
+                    bgTracking = true;
+                  }
+
+                  updateBgUi();
+                } catch(e) {
+                  alert("Kunde inte ändra bakgrundsspårning.");
+                }
+              };
+
               updateFollowUi();
               setupNextTimeReport();
+              checkBackgroundTrackingState();
+              setInterval(checkBackgroundTrackingState, 3000);
+              setInterval(syncNativeTrack, 2500);
 
               window.addEventListener("error", function(e) {
                 setMapStatus("JS-fel: " + e.message, "bad");
+              });
+
+              document.addEventListener("visibilitychange", function() {
+                if (!document.hidden) {
+                  checkBackgroundTrackingState();
+                  syncNativeTrack();
+                }
               });
 
               setInterval(readNativeHeading, 80);
@@ -939,6 +1320,7 @@ jobs:
                   setMapStatus("laddad", "ok");
                   setupSearch(Search);
                   startGps();
+                  syncNativeTrack();
                   requestAnimationFrame(loop);
                 }).catch(function(error) {
                   setMapStatus("fel: " + error.message, "bad");
@@ -1137,26 +1519,10 @@ jobs:
                 let score = 0;
 
                 const preferred = [
-                  "NUMMER",
-                  "NR",
-                  "OBJECTID",
-                  "ID",
-                  "FID",
-                  "YTA",
-                  "YTANR",
-                  "YTA_NR",
-                  "YTAID",
-                  "YTA_ID",
-                  "SKOTSEL",
-                  "SKÖTSEL",
-                  "SKOTSELYTA",
-                  "SKÖTSELYTA",
-                  "NAMN",
-                  "NAME",
-                  "LABEL",
-                  "TEXT",
-                  "KOD",
-                  "CODE"
+                  "NUMMER", "NR", "OBJECTID", "ID", "FID",
+                  "YTA", "YTANR", "YTA_NR", "YTAID", "YTA_ID",
+                  "SKOTSEL", "SKÖTSEL", "SKOTSELYTA", "SKÖTSELYTA",
+                  "NAMN", "NAME", "LABEL", "TEXT", "KOD", "CODE"
                 ];
 
                 preferred.forEach(function(p, i) {
@@ -1245,6 +1611,80 @@ jobs:
                   maximumAge: 500,
                   timeout: 15000
                 });
+              }
+
+              function checkBackgroundTrackingState() {
+                try {
+                  if (typeof AndroidBridge !== "undefined" && AndroidBridge.isBackgroundTracking) {
+                    bgTracking = !!AndroidBridge.isBackgroundTracking();
+                    updateBgUi();
+                  }
+                } catch(e) {}
+              }
+
+              function syncNativeTrack() {
+                try {
+                  if (typeof AndroidBridge === "undefined" || !AndroidBridge.getNativeTrack) return;
+
+                  const raw = AndroidBridge.getNativeTrack();
+                  const points = JSON.parse(raw || "[]");
+
+                  if (!Array.isArray(points) || !points.length) return;
+
+                  points.forEach(function(p) {
+                    if (!Array.isArray(p) || p.length < 4) return;
+
+                    const lon = Number(p[0]);
+                    const lat = Number(p[1]);
+                    const acc = Number(p[2]);
+                    const time = String(p[3]);
+
+                    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+                    if (acc > 80) return;
+                    if (nativeSeenTimes[time]) return;
+
+                    nativeSeenTimes[time] = true;
+
+                    const next = { lon: lon, lat: lat };
+
+                    if (!lastNativePoint) {
+                      lastNativePoint = next;
+
+                      if (!trackPaths.length) {
+                        trackPaths.push([[lon, lat]]);
+                      } else {
+                        const current = trackPaths[trackPaths.length - 1];
+                        if (current && current.length === 0) current.push([lon, lat]);
+                      }
+
+                      return;
+                    }
+
+                    const d = roughDistanceMeters(lastNativePoint.lat, lastNativePoint.lon, lat, lon);
+
+                    if (d > 120) {
+                      trackPaths.push([[lon, lat]]);
+                      lastNativePoint = next;
+                      return;
+                    }
+
+                    if (d >= 1.5) {
+                      let current = trackPaths[trackPaths.length - 1];
+
+                      if (!current) {
+                        current = [];
+                        trackPaths.push(current);
+                      }
+
+                      current.push([lon, lat]);
+                      totalTrackMeters += d;
+                      lastNativePoint = next;
+
+                      if (current.length > 4000) current.shift();
+                      if (trackPaths.length > 30) trackPaths.shift();
+                    }
+                  });
+                } catch(e) {}
               }
 
               function updateHeading(pos, distanceMeters, next) {
@@ -1350,6 +1790,8 @@ jobs:
                       moveMap(displayPos.lon, displayPos.lat, true);
                     }
                   }
+                } else {
+                  drawTrack();
                 }
 
                 requestAnimationFrame(loop);
@@ -1517,13 +1959,11 @@ jobs:
                   { area: "T1, Ebbepark", district: "Staden 1222", object: "10605" },
                   { area: "T1, Eskadern", district: "Staden 1223", object: "10606" },
                   { area: "Gottfridsberg", district: "Staden 1224", object: "10607" },
-
                   { area: "Södra Majelden, Prästbolsg", district: "Stångån 2331", object: "10610" },
                   { area: "Pionjärgatan, Södra Ekkällan", district: "Stångån 2332", object: "10611" },
                   { area: "Norra Majelden", district: "Stångån 2333", object: "10612" },
                   { area: "Ekängen, Linghem", district: "Stångån 2333", object: "10612" },
                   { area: "Knektg, Luftvärnsg", district: "Stångån 2334", object: "10613" },
-
                   { area: "Johannelund", district: "Stångån 2441", object: "10614" },
                   { area: "Hejdegården, Emriksgatan mm", district: "Stångån 2442", object: "10615" },
                   { area: "Stolplyckan, Magistratshagen", district: "Stångån 2443", object: "10616" },
@@ -1531,7 +1971,6 @@ jobs:
                   { area: "Jakobsdal", district: "Stångån 2444", object: "10617" },
                   { area: "Snickaregatan/Folkungallen", district: "Stångån 2444", object: "10617" },
                   { area: "Blästad, Vidingsjö, Ullstämma", district: "Stångån 2444", object: "10617" },
-
                   { area: "Åbylund", district: "Slätten 3551", object: "10620" },
                   { area: "Ryd", district: "Slätten 3552", object: "10621" },
                   { area: "Vikingstad", district: "Slätten 3553", object: "10622" },
